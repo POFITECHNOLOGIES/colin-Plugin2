@@ -44,9 +44,9 @@ class ShipStream_WooCommerce_Client
      * @return mixed
      * @throws Exception
      */
-    public function request($endpoint, $method = 'GET', $params = [])
+    public function request($endpoint, $method = 'POST', $params = [])
     {
-        $url = $this->_config['base_url'] . '/wp-json/' . $endpoint;
+        $url = $this->_config['base_url'] . $endpoint;
 
         $curl = curl_init();
         $headers = [
@@ -75,6 +75,10 @@ class ShipStream_WooCommerce_Client
         curl_setopt($curl, CURLOPT_URL, $url);
         curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
+
+        // Bypass SSL verification
+        curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, false);
 
         $response = curl_exec($curl);
 

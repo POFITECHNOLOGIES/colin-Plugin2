@@ -28,7 +28,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @return array
      * @throws Plugin_Exception
      */
-    public function connectionDiagnostics(bool $super): array
+    public function connectionDiagnostics(bool $super = false): array
     {
         $info = $this->_wooCommerceApi('shipstream/v1/info');
         return [
@@ -38,6 +38,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             sprintf('Service Status: %s', $this->isFulfillmentServiceRegistered() ? '✅ Registered' : '🚨 Not registered')
         ];
     }
+
 
     /**
      * Activate the plugin
@@ -137,7 +138,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      */
     public function registerFulfillmentService()
     {
-        if ($this->_wooCommerceApi('shipstream/v1/set_config', 'POST', ['warehouse_api_url' => $this->getCallbackUrl(null)])) {
+        if ($this->_wooCommerceApi('shipstream/v1/set_config', 'POST', ['path' => 'warehouse_api_url','value' => $this->getCallbackUrl(null)])) {
             $this->setState(self::STATE_FULFILLMENT_SERVICE_REGISTERED, TRUE);
         }
     }
@@ -148,7 +149,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      */
     public function unregisterFulfillmentService()
     {
-        $this->_wooCommerceApi('shipstream/v1/set_config', 'POST', ['warehouse_api_url' => NULL]);
+        $this->_wooCommerceApi('shipstream/v1/set_config', 'POST', ['path' => 'warehouse_api_url','value' => NULL]);
         $this->setState(self::STATE_FULFILLMENT_SERVICE_REGISTERED, NULL);
     }
 
@@ -174,7 +175,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             return;
         }
 
-        $wooCommerceOrder = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'GET' ,$orderIncrementId);
+        $wooCommerceOrder = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'POST' ,$orderIncrementId);
         $shippingAddress = $this->formatShippingAddress($wooCommerceOrder['shipping_address']);
         $orderItems = $this->getOrderItems($wooCommerceOrder['items']);
 
@@ -226,14 +227,14 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     public function shipmentPackedEvent(Varien_Object $data)
     {
         $clientOrderId = $this->_getWooCommerceShipmentId($data->getSource());
-        $clientOrder = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'GET', $clientOrderId);
+        $clientOrder = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'POST', $clientOrderId);
 
         if (!in_array($clientOrder['status'], ['submitted', 'failed_to_submit'])) {
             throw new Plugin_Exception("Order $clientOrderId status is '{$clientOrder['status']}', expected 'submitted'.");
         }
 
         $payload = $data->getData();
-        $payload['warehouse_name'] = $this->getWarehouseName($data->getWarehouseId());
+        $payload['warehouse_name'] = $this->_getWarehouseName($data->getWarehouseId());
         $wooCommerceShipmentId = $this->_wooCommerceApi('shipstream/v1/order_shipment/create_with_tracking','POST', [$clientOrderId, $payload]);
 
         $this->log(sprintf('Created WooCommerce shipment # %s for order # %s', $wooCommerceShipmentId, $clientOrderId));
@@ -302,7 +303,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @return array
      * @throws Plugin_Exception
      */
-    protected function _wooCommerceApi($endpoint, $method = 'GET', $params = [])
+    protected function _wooCommerceApi($endpoint, $method = 'POST', $params = [])
     {
         try {
             return $this->getClient()->request($endpoint, $method, $params);
@@ -429,7 +430,8 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @param int $warehouseId
      * @return string|null
      */
-    protected function getWarehouseName(int $warehouseId): ?string
+
+    protected function _getWarehouseName(int $warehouseId): ?string
     {
         $warehouse = $this->call('warehouse.get', [$warehouseId]);
         return $warehouse['name'] ?? NULL;
