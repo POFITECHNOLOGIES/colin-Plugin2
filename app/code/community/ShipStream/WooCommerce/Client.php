@@ -47,7 +47,6 @@ class ShipStream_WooCommerce_Client
     public function request($endpoint, $method = 'POST', $params = [])
     {
         $url = $this->_config['base_url'] . $endpoint;
-
         $curl = curl_init();
         $headers = [
             'Authorization: Basic ' . $this->_token,

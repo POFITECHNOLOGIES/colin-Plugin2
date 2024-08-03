@@ -46,7 +46,7 @@ CSS;
         <div class="WooCommerce-config">
             <div class="WooCommerce-config-row">
                 <div class="nobr">
-                    <p><label>{$helper->__('If the Magento')}</label></p>
+                    <p><label>{$helper->__('If the WooCommerce')}</label></p>
                 </div>
                 <div>
                     <div class="field-row">
