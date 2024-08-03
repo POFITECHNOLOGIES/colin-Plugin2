@@ -53,7 +53,7 @@
             <auto_fulfill_status>
                 <label>Auto-Fulfill Order Status</label>
                 <type>select</type>
-                <source>[{"label":"","value":""},{"label":"Disabled","value":"-"},{"label":"Processing","value":"wc-processing"},{"label":"Ready to Ship","value":"wc-ready-to-ship"},{"label":"Custom (advanced)","value":"custom"}]</source>
+                <source>[{"label":"","value":""},{"label":"Disabled","value":"-"},{"label":"Processing","value":"processing"},{"label":"Ready to Ship","value":"ready_to_ship"},{"label":"Custom (advanced)","value":"custom"}]</source>
                 <comment><![CDATA[
                 Orders in this status will be automatically imported. Upon successful import the order status is advanced to 'Submitted'.
                 Choosing 'Ready to Ship' will require a user or some custom automation process to advance the order to 'Ready to Ship' status before it can be imported.
@@ -100,7 +100,7 @@
         </config>
         <crontab>
             <every_ten_minutes>
-                <sync_orders>cronSyncOrders</sync_orders>
+                <sync_orders>cron_sync_orders</sync_orders>
             </every_ten_minutes>
         </crontab>
     </ShipStream_WooCommerce>

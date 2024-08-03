@@ -35,7 +35,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             sprintf('WooCommerce Version: %s', $info['woocommerce_version'] ?? 'undefined'),
             sprintf('WordPress Version: %s', $info['wordpress_version'] ?? 'undefined'),
             sprintf('ShipStream Sync Version: %s', $info['shipstream_sync_version'] ?? 'undefined'),
-            sprintf('Service Status: %s', $this->isFulfillmentServiceRegistered() ? 'Registered' : 'Not registered')
+            sprintf('Service Status: %s', $this->isFulfillmentServiceRegistered() ? '✅ Registered' : '🚨 Not registered')
         );
     }
 
@@ -174,6 +174,50 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @param Varien_Object $data
      * @throws Exception
      */
+    // public function importOrderEvent(Varien_Object $data)
+    // {
+    //     $orderIncrementId = $data->getData('increment_id');
+    //     $logPrefix = sprintf('WooCommerce Order # %s: ', $orderIncrementId);
+
+    //     $result = $this->call('order.search', [['order_ref' => $orderIncrementId],[], []]);
+
+    //     if ($result['totalCount'] > 0) {
+    //         $message = sprintf('ShipStream Order # %s was created at %s', $result['results'][0]['unique_id'], $result['results'][0]['created_at']);
+    //         $this->_addComment($orderIncrementId, 'wc-submitted', $message);
+    //         return;
+    //     }
+
+    //     $wooCommerceOrder = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'POST' ,['shipment_id' => $orderIncrementId]);
+
+    //    if(empty($wooCommerceOrder))
+    //    {
+    //     return;
+    //    }
+    //     $shippingAddress = $this->formatShippingAddress($wooCommerceOrder['shipping_address']);
+    //     $orderItems = $this->getOrderItems($wooCommerceOrder['items']);
+        
+    //     if (empty($orderItems)) {
+    //         return;
+    //     }
+
+    //     $additionalData = [
+    //         'order_ref'         => $wooCommerceOrder['order_increment_id'],
+    //         'shipping_method'   => $this->_getShippingMethod($wooCommerceOrder),
+    //         'source'            => 'woocommerce:'.$wooCommerceOrder['order_increment_id'],
+    //     ];
+        
+    //     $newOrderData = [
+    //         'store' => NULL,
+    //         'items' => $orderItems,
+    //         'address' => $shippingAddress,
+    //         'options' => $additionalData,
+    //         'timestamp' => new \DateTime('now', $this->getTimeZone()),
+    //     ];
+    //     $this->processOrderTransformScript($newOrderData, $wooCommerceOrder, $logPrefix);
+    //     $this->submitOrder($newOrderData, $wooCommerceOrder, $logPrefix);
+    // }
+
+
     public function importOrderEvent(Varien_Object $data)
     {
         $orderIncrementId = $data->getData('increment_id');
@@ -182,7 +226,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
         // Check if order exists locally and if not, create new local order
         $result = $this->call('order.search', array(array('order_ref' => $orderIncrementId),array(), array()));
         if ($result['totalCount'] > 0) {
-            // Local order exists, update WooCommerce order status to 'wc-submitted'.
+            // Local order exists, update WooCommerce order status to 'submitted'.
             $message = sprintf('ShipStream Order # %s was created at %s', $result['results'][0]['unique_id'], $result['results'][0]['created_at']);
             $this->_addComment($orderIncrementId, 'wc-submitted', $message);
             return; // Ignore already existing orders
@@ -218,7 +262,8 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             'timestamp' => new \DateTime('now', $this->getTimeZone()),
         );
         $output = NULL;
-       
+        // print_r($newOrderData);
+        // exit();
         // Apply user scripts
         try {
             if ($script = $this->getConfig('filter_script')) {
@@ -277,7 +322,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
 
             try {
                 $message = sprintf('Order could not be submitted due to the following Order Transform Script error: %s', $e->getMessage());
-                $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-failed-to-submit', $message);
+                $this->_addComment($wooCommerceOrder['order_increment_id'], 'failed_to_submit', $message);
             } catch (Exception $ex) {
             }
 
@@ -309,7 +354,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             $e->setSkipAutoRetry(TRUE); // Do not retry order creations as errors are usually not temporary
             try {
                 $message = sprintf('Order could not be submitted due to the following error: %s', $e->getMessage());
-                $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-failed-to-submit', $message);
+                $this->_addComment($wooCommerceOrder['order_increment_id'], 'failed_to_submit', $message);
             } catch (Exception $ex) {
             }
 
@@ -351,8 +396,8 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
         $clientOrderId = $this->_getWooCommerceShipmentId($data->getSource());
         $clientOrder = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'POST', $clientOrderId);
 
-        if (!in_array($clientOrder['status'], array('wc-submitted', 'wc-failed-to-submit'))) {
-            throw new Plugin_Exception("Order $clientOrderId status is '{$clientOrder['status']}', expected 'wc-submitted'.");
+        if (!in_array($clientOrder['status'], array('submitted', 'failed_to_submit'))) {
+            throw new Plugin_Exception("Order $clientOrderId status is '{$clientOrder['status']}', expected 'submitted'.");
         }
 
         $payload = $data->getData();
@@ -687,16 +732,10 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @param string $comment 
      * @return void 
      */
-    protected function _addComment(string $orderIncrementId, string $orderStatus, string $comment = '', string $appTitle = '', string $shipstreamId = '')
+    protected function _addComment(string $orderIncrementId, string $orderStatus, string $comment = '')
     {
         try {
-            $comment_data = array(
-                'order_id'      => $orderIncrementId,
-                'status'        => $orderStatus,
-                'comment'       => $comment,
-                'apptitle'      => $appTitle,
-                'shipstreamid'  => $shipstreamId,
-            );
+            $comment_data = array('order_id' => $orderIncrementId,'status' => $orderStatus,'comment' => $comment);
             $data = $this->_wooCommerceApi('shipstream/v1/order/addComment', 'POST', $comment_data);
             $message = sprintf('Status of order # %s was changed to %s in merchant site, comment: %s', $orderIncrementId, $orderStatus, $comment);
             $this->log($message);
@@ -706,6 +745,8 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
         }
     }
 
+
+/*--------------------------------------------------------------------------------------------------------*/
     /**
      * @param string $endpoint
      * @param string $method
@@ -787,6 +828,12 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     }
 
     /**
+     * @param $wooCommerceOrder
+     * @return string
+     */
+
+
+    /**
      * @param array $orderData
      * @param array $wooCommerceOrder
      * @param string $logPrefix
@@ -815,9 +862,9 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             }
 
             $this->log($logPrefix . sprintf('Order Submitted to ShipStream: Order # %s', $result['unique_id']));
-            $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-submitted', sprintf('Submitted to ShipStream: Order # %s', $this->getAppTitle(), $result['unique_id']));
+            $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-submitted', sprintf('Submitted to ShipStream: Order # %s', $result['unique_id']));
         } catch (Exception $e) {
-            $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-failed-to-submit', sprintf('Failed to Submit to ShipStream: %s', $this->getAppTitle()));
+            $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-failed-to-submit', sprintf('Failed to Submit to ShipStream: %s', $e->getMessage()));
             throw new Plugin_Exception($e->getMessage());
         }
     }
