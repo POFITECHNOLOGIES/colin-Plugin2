@@ -1,8 +1,34 @@
 <?php
+/**
+ * Magento
+ *
+ * NOTICE OF LICENSE
+ *
+ * This source file is subject to the Open Software License (OSL 3.0)
+ * that is bundled with this package in the file LICENSE.txt.
+ * It is also available through the world-wide-web at this URL:
+ * http://opensource.org/licenses/osl-3.0.php
+ * If you did not receive a copy of the license and are unable to
+ * obtain it through the world-wide-web.
+ *
+ * DISCLAIMER
+ *
+ * Do not edit or add to this file if you wish to upgrade Magento to newer
+ * versions in the future. If you wish to customize Magento for your
+ * needs please refer to http://www.magento.com for more information.
+ *
+ *
+ * @package   ShipStream_WooCommmerce
+ * @copyright Copyright (c) 2024 Magento, Inc. (http://www.magento.com)
+ * @license   Open Software License (OSL 3.0)
+ */
+
 
 /**
- * The ShipStream order.increment_id is the WooCommerce shipment.increment_id.
- * The ShipStream order ref (order.ext_order_id) is the WooCommerce order.increment_id.
+ * The ShipStream order.increment_id is the WooCommerce
+ * shipment.increment_id.
+ * The ShipStream order ref (order.ext_order_id) is the
+ * WooCommerce order.increment_id.
  */
 class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
 {
@@ -13,29 +39,64 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     const STATE_LOCK_ORDER_PULL = 'lock_order_pull';
     const STATE_FULFILLMENT_SERVICE_REGISTERED = 'fulfillment_service_registered';
 
-    /** @var ShipStream_WooCommerce_Client */
-    protected $_client = NULL;
+    /**
+     * Client variable
+     *
+     * @var ?ShipStream_WooCommerce_Client
+     */
+    protected ?ShipStream_WooCommerce_Client $_client = null;
 
     /**
+     * Check the connection config
+     *
      * @return bool
+     * @throws Exception
      */
-    public function hasConnectionConfig()
+    public function hasConnectionConfig(): bool
     {
-        return $this->getConfig('api_url') && $this->getConfig('api_login') && $this->getConfig('api_password');
+        return $this->getConfig('api_url')
+            && $this->getConfig('api_login')
+            && $this->getConfig('api_password');
     }
 
     /**
+     * Debug the connection
+     *
+     * @param bool $super Global variable
+     *
      * @return array
      * @throws Plugin_Exception
+     * @throws Exception
      */
     public function connectionDiagnostics(bool $super = false): array
     {
-        $info = $this->_wooCommerceApi('shipstream/v1/info');
+        $info = $this->wooCommerceApi('shipstream/v1/info');
+        if ($this->isFulfillmentServiceRegistered()) {
+            $serviceStatus = 'Registered';
+        } else {
+            $serviceStatus = 'Not registered';
+        }
+
+        if ($info['woocommerce_version']) {
+            $woocommerceVersion = $info['woocommerce_version'];
+        } else {
+            $woocommerceVersion = 'undefined';
+        }
+
         return array(
-            sprintf('WooCommerce Version: %s', $info['woocommerce_version'] ?? 'undefined'),
-            sprintf('WordPress Version: %s', $info['wordpress_version'] ?? 'undefined'),
-            sprintf('ShipStream Sync Version: %s', $info['shipstream_sync_version'] ?? 'undefined'),
-            sprintf('Service Status: %s', $this->isFulfillmentServiceRegistered() ? 'Registered' : 'Not registered')
+            sprintf(
+                'WooCommerce Version: %s', $woocommerceVersion
+            ),
+            sprintf(
+                'WordPress Version: %s', $info['wordpress_version'] ?? 'undefined'
+            ),
+            sprintf(
+                'ShipStream Sync Version: %s', $info['shipstream_sync_version'] ?? 'undefined'
+            ),
+            sprintf(
+                'Service Status: %s',
+                $serviceStatus
+            )
         );
     }
 
@@ -44,6 +105,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * Activate the plugin
      *
      * @return string[]
+     * @throws Exception
      */
     public function activate(): array
     {
@@ -74,9 +136,9 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
         try {
             $this->setState(
                 array(
-                self::STATE_LOCK_ORDER_PULL => NULL,
-                self::STATE_ORDER_LAST_SYNC_AT => NULL,
-                self::STATE_FULFILLMENT_SERVICE_REGISTERED => NULL,
+                    self::STATE_LOCK_ORDER_PULL => null,
+                    self::STATE_ORDER_LAST_SYNC_AT => null,
+                    self::STATE_FULFILLMENT_SERVICE_REGISTERED => null,
                 )
             );
         } catch (Plugin_Exception $e) {
@@ -87,7 +149,10 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     }
 
     /**
+     * Reinstall the plugin
+     *
      * @return string[]
+     * @throws Exception
      */
     public function reinstall(): array
     {
@@ -97,11 +162,12 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     /**
      * Trigger an inventory sync from the WooCommerce side which is more atomic
      *
+     * @return void
      * @throws Plugin_Exception
      */
-    public function syncInventory()
+    public function syncInventory(): void
     {
-        $result = $this->_wooCommerceApi('shipstream/v1/sync_inventory', 'POST');
+        $result = $this->wooCommerceApi('shipstream/v1/sync_inventory', 'POST');
         if (isset($result['success'])) {
             if (!$result['success']) {
                 throw new Plugin_Exception('Unexpected response format.');
@@ -115,13 +181,17 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     /**
      * Synchronize orders since the configured date
      *
+     * @return void
      * @throws Plugin_Exception
+     * @throws Exception
      */
-    public function syncOrders()
+    public function syncOrders(): void
     {
         $since = $this->getConfig('sync_orders_since');
         if ($since && !$this->validateDate($since)) {
-            throw new Plugin_Exception('Invalid synchronize orders since date format. Valid format: YYYY-MM-DD.');
+            throw new Plugin_Exception(
+                'Invalid synchronize orders since date format. Valid format: YYYY-MM-DD.'
+            );
         }
 
         $this->_importOrders($since);
@@ -129,39 +199,60 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
 
     /**
      * Synchronize orders since the last sync
+     *
+     * @return void
+     * @throws Exception
      */
-    public function cronSyncOrders()
+    public function cronSyncOrders(): void
     {
         $this->_importOrders();
     }
 
     /**
+     * Check is the service is fulfillment or not
+     *
      * @return array|string|null
+     * @throws Exception
      */
-    public function isFulfillmentServiceRegistered()
+    public function isFulfillmentServiceRegistered(): array|string|null
     {
         return $this->getState(self::STATE_FULFILLMENT_SERVICE_REGISTERED);
     }
 
     /**
      * Register fulfillment service
+     *
+     * @return void
      * @throws Plugin_Exception
+     * @throws Exception
      */
-    public function registerFulfillmentService()
+    public function registerFulfillmentService(): void
     {
-        if ($this->_wooCommerceApi('shipstream/v1/set_config', 'POST', array('path' => 'warehouse_api_url','value' => $this->getCallbackUrl(null)))) {
-            $this->setState(self::STATE_FULFILLMENT_SERVICE_REGISTERED, TRUE);
+        $apiConfigData = array(
+            'path' => 'warehouse_api_url',
+            'value' => $this->getCallbackUrl(null)
+        );
+        if ($this->wooCommerceApi(
+            'shipstream/v1/set_config',
+            'POST',
+            $apiConfigData
+        )
+        ) {
+            $this->setState(self::STATE_FULFILLMENT_SERVICE_REGISTERED, true);
         }
     }
 
     /**
      * Unregister fulfillment service
+     *
+     * @return void
      * @throws Plugin_Exception
      */
-    public function unregisterFulfillmentService()
+    public function unregisterFulfillmentService(): void
     {
-        $this->_wooCommerceApi('shipstream/v1/set_config', 'POST', array('path' => 'warehouse_api_url','value' => NULL));
-        $this->setState(self::STATE_FULFILLMENT_SERVICE_REGISTERED, NULL);
+        $apiConfigData = array('path' => 'warehouse_api_url', 'value' => null);
+        $this->wooCommerceApi('shipstream/v1/set_config', 'POST', $apiConfigData);
+        $this->setState(self::STATE_FULFILLMENT_SERVICE_REGISTERED);
     }
 
     /*****************
@@ -171,161 +262,464 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     /**
      * Import client order
      *
-     * @param Varien_Object $data
+     * @param Varien_Object $data Varien object
+     *
+     * @return void
      * @throws Exception
      */
-    public function importOrderEvent(Varien_Object $data)
+    public function importOrderEvent(Varien_Object $data): void
     {
         $orderIncrementId = $data->getData('increment_id');
         $logPrefix = sprintf('WooCommerce Order # %s: ', $orderIncrementId);
 
-        // Check if order exists locally and if not, create new local order
-        $result = $this->call('order.search', array(array('order_ref' => $orderIncrementId),array(), array()));
-        if ($result['totalCount'] > 0) {
-            // Local order exists, update WooCommerce order status to 'wc-submitted'.
-            $message = sprintf('ShipStream Order # %s was created at %s', $result['results'][0]['unique_id'], $result['results'][0]['created_at']);
-            $this->_addComment($orderIncrementId, 'wc-submitted', $message);
-            return; // Ignore already existing orders
+        if ($this->isOrderExists($orderIncrementId)) {
+            return;
         }
 
-        // Get full client order data
-        $wooCommerceOrder = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'POST', array('shipment_id' => $orderIncrementId));
+        $wooCommerceOrder = $this->getWooCommerceOrder($orderIncrementId);
         if (empty($wooCommerceOrder)) {
             return;
         }
 
-        // Setup order.create arguments
-        $shippingAddress = $this->formatShippingAddress($wooCommerceOrder['shipping_address']);
-
-        // Prepare order and shipment items
-        $orderItems = $this->getOrderItems($wooCommerceOrder['items']);
-        if (empty($orderItems)) {
+        $newOrderData = $this->prepareNewOrderData($wooCommerceOrder);
+        if (empty($newOrderData)) {
             return;
         }
 
-        // Prepare additional order data
+        try {
+            $this->applyUserScripts($newOrderData, $wooCommerceOrder, $logPrefix);
+            $this->createOrder($newOrderData, $wooCommerceOrder);
+            $this->updateWooCommerceOrderStatus($wooCommerceOrder, $orderIncrementId);
+        } catch (Exception $e) {
+            $this->handleException($e, $wooCommerceOrder);
+        }
+
+    }
+
+    /**
+     * Checks if the order already exists locally.
+     *
+     * @param string $orderIncrementId The WooCommerce order increment ID.
+     *
+     * @return bool true if the order exists, false otherwise.
+     * @throws Plugin_Exception
+     */
+    protected function isOrderExists(string $orderIncrementId): bool
+    {
+        $result = $this->call(
+            'order.search',
+            array(
+                array('order_ref' => $orderIncrementId), array(), array()
+            )
+        );
+        if ($result['totalCount'] > 0) {
+            $uniqueId = $result['results'][0]['unique_id'] ?? '';
+            $createdAt = $result['results'][0]['created_at'] ?? '';
+            $message = sprintf(
+                'ShipStream Order # %s was created at %s',
+                $uniqueId,
+                $createdAt
+            );
+            $this->addComment($orderIncrementId, 'wc-submitted', $message);
+            return true; // Ignore already existing orders
+        }
+
+        return false;
+    }
+
+    /**
+     * Retrieves the WooCommerce order data.
+     *
+     * @param string $orderIncrementId The WooCommerce order increment ID.
+     *
+     * @return array The WooCommerce order data.
+     * @throws Plugin_Exception
+     */
+    protected function getWooCommerceOrder(string $orderIncrementId): array
+    {
+        $orderId = array('shipment_id' => $orderIncrementId);
+        return $this->wooCommerceApi(
+            'shipstream/v1/order_shipment/info',
+            'POST',
+            $orderId
+        );
+    }
+
+    /**
+     * Prepares the new order data for submission.
+     *
+     * @param array $wooCommerceOrder The WooCommerce order data.
+     *
+     * @return array|null The new order data or null if preparation fails.
+     * @throws Plugin_Exception
+     * @throws Exception
+     */
+    protected function prepareNewOrderData(array $wooCommerceOrder): ?array
+    {
+        $shippingAddress = $this->formatShippingAddress(
+            $wooCommerceOrder['shipping_address']
+        );
+        $orderItems = $this->getOrderItems($wooCommerceOrder['items']);
+        if (empty($orderItems)) {
+            return null;
+        }
+
         $additionalData = array(
             'order_ref' => $wooCommerceOrder['order_increment_id'],
-            'shipping_method' => $this->_getShippingMethod($wooCommerceOrder),
+            'shipping_method' => $this->getShippingMethod($wooCommerceOrder),
             'source' => 'woocommerce:' . $wooCommerceOrder['order_increment_id'],
         );
 
-        $newOrderData = array(
-            'store' => NULL,
+        return array(
+            'store' => null,
             'items' => $orderItems,
             'address' => $shippingAddress,
             'options' => $additionalData,
-            'timestamp' => new \DateTime('now', $this->getTimeZone()),
+            'timestamp' => new DateTime('now', $this->getTimeZone()),
         );
-        $output = NULL;
-       
-        // Apply user scripts
-        try {
-            if ($script = $this->getConfig('filter_script')) {
-                // Add product info for use in script
-                // API product.search returns an array of products or an empty array in key 'result'.
-                $products = $this->call('product.search', array(array('sku' => array('in' => $skus))))['result'];
-                foreach ($newOrderData['items'] as &$item) {
-                    $item['product'] = NULL;
-                    foreach ($products as $product) {
-                        if ($product['sku'] == $item['sku']) {
-                            $item['product'] = $product;
-                            break;
-                        }
-                    }
-                }
+    }
 
-                unset($item);
+    /**
+     * Applies user scripts to the new order data.
+     *
+     * @param array $newOrderData The new order data.
+     * @param array $wooCommerceOrder The WooCommerce order data.
+     * @param string $logPrefix The log prefix for this order.
+     *
+     * @return void
+     * @throws Plugin_Exception If an error occurs while applying the script.
+     * @throws Exception
+     */
+    protected function applyUserScripts(
+        array  &$newOrderData,
+        array  $wooCommerceOrder,
+        string $logPrefix
+    ): void
+    {
+        if ($script = $this->getConfig('filter_script')) {
+            $this->addProductInfoToItems($newOrderData);
 
-                try {
-                    $newOrderData = $this->applyScriptForOrder($script, $newOrderData, array('wooCommerceOrder' => $wooCommerceOrder), $output);
-                } catch (Exception $e) {
-                    throw new Plugin_Exception('An unexpected error occurred while applying the Order Transform Script.', 102, $e);
-                }
-
-                if (!array_key_exists('store', $newOrderData) || empty($newOrderData['items']) || empty($newOrderData['address']) || empty($newOrderData['options'])) {
-                    throw new Plugin_Exception('The Order Transform Script did not return the data expected.');
-                }
+            try {
+                $output = null;
+                $wooCommerceOrder = array('wooCommerceOrder' => $wooCommerceOrder);
+                $newOrderData = $this->applyScriptForOrder(
+                    $script,
+                    $newOrderData,
+                    $wooCommerceOrder,
+                    $output
+                );
+                $this->validateNewOrderData($newOrderData);
 
                 if (!empty($newOrderData['skip'])) {
-                    // do not submit order
-                    $this->log($logPrefix . 'Order has been skipped by the Order Transform Script.', self::DEBUG);
+                    $this->log(
+                        $logPrefix . 'Order has been skipped by the Order Transform Script.',
+                        self::DEBUG
+                    );
                     return;
                 }
 
-                foreach ($newOrderData['items'] as $k => $item) {
-                    // Remove added product info from items data
-                    unset($newOrderData['items'][$k]['product']);
+                $this->removeSkippedItems($newOrderData, $logPrefix);
+            } catch (Exception $e) {
+                throw new Plugin_Exception(
+                    'An unexpected error occurred while applying the Order Transform Script.',
+                    102,
+                    $e
+                );
+            }
+        }
+    }
 
-                    if (!empty($item['skip'])) {
-                        // Skipping an item
-                        $this->log($logPrefix . sprintf('SKU "%s" has been skipped by the Order Transform Script.', $newOrderData['items'][$k]['sku']), self::DEBUG);
-                        unset($newOrderData['items'][$k]);
-                    }
+    /**
+     * Adds product information to the order items.
+     *
+     * @param array $newOrderData The new order data.
+     *
+     * @return void
+     * @throws Plugin_Exception
+     */
+    protected function addProductInfoToItems(array &$newOrderData): void
+    {
+        $products = $this->call(
+            'product.search',
+            array(
+                array(
+                    'sku' => array('in' => $skus)
+                )
+            )
+        )['result'];
+        foreach ($newOrderData['items'] as &$item) {
+            $item['product'] = null;
+            foreach ($products as $product) {
+                if ($product['sku'] == $item['sku']) {
+                    $item['product'] = $product;
+                    break;
                 }
-
-                if (empty($newOrderData['items'])) {
-                    // no items to submit, all were skipped
-                    $this->log($logPrefix . 'All SKUs have been skipped by the Order Transform Script.', self::DEBUG);
-                    return;
-                }
             }
-        } catch (Plugin_Exception $e) {
-            if (empty($e->getSubjectType())) {
-                $e->setSubject('WooCommerce Order', $wooCommerceOrder['order_increment_id']);
-            }
-
-            try {
-                $message = sprintf('Order could not be submitted due to the following Order Transform Script error: %s', $e->getMessage());
-                $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-failed-to-submit', $message);
-            } catch (Exception $ex) {
-            }
-
-            throw $e;
         }
 
-        // Submit order
+        unset($item);
+    }
+
+    /**
+     * Validates the new order data after script application.
+     *
+     * @param array $newOrderData The new order data.
+     *
+     * @return void
+     * @throws Plugin_Exception If the data is not valid.
+     */
+    protected function validateNewOrderData(array $newOrderData): void
+    {
+        if (!array_key_exists('store', $newOrderData)
+            || empty($newOrderData['items'])
+            || empty($newOrderData['address'])
+            || empty($newOrderData['options'])
+        ) {
+            throw new Plugin_Exception(
+                'The Order Transform Script did not return the data expected.'
+            );
+        }
+    }
+
+    /**
+     * Removes skipped items from the new order data.
+     *
+     * @param array $newOrderData The new order data.
+     * @param string $logPrefix The log prefix for this order.
+     *
+     * @return void
+     */
+    protected function removeSkippedItems(array &$newOrderData, string $logPrefix): void
+    {
+        foreach ($newOrderData['items'] as $k => $item) {
+            unset($newOrderData['items'][$k]['product']);
+
+            if (!empty($item['skip'])) {
+                $sku = $newOrderData['items'][$k]['sku'] ?? '';
+                if ($sku) {
+                    $this->log(
+                        $logPrefix . sprintf(
+                            'SKU "%s" has been skipped by the Order Transform Script.',
+                            $sku
+                        ),
+                        self::DEBUG
+                    );
+                    unset($newOrderData['items'][$k]);
+                }
+            }
+        }
+
+        if (empty($newOrderData['items'])) {
+            $this->log(
+                $logPrefix . 'All SKUs have been skipped by the Order Transform Script.',
+                self::DEBUG
+            );
+        }
+    }
+
+    /**
+     * Submits the new order to the order creation service.
+     *
+     * @param array $newOrderData The new order data.
+     * @param array $wooCommerceOrder The WooCommerce order data.
+     *
+     * @return void
+     * @throws Plugin_Exception If an error occurs while submitting the order.
+     * @throws Exception
+     */
+    protected function createOrder(array $newOrderData, array $wooCommerceOrder): void
+    {
+        $output = NULL;
         $this->_lockOrderImport();
         try {
-            $result = $this->call('order.create', array($newOrderData['store'], $newOrderData['items'], $newOrderData['address'], $newOrderData['options']));
-            $this->log(sprintf('Created %s Order # %s for WooCommerce Order # %s', $this->getAppTitle(), $result['unique_id'], $wooCommerceOrder['order_increment_id']));
-            if ($output) {
-                if (!Mage::getIsDeveloperMode()) {
-                    $output = substr($output, 0, 512);
-                }
-
-                try {
-                    $this->call('order.comment', array($result['unique_id'], sprintf("Script output from \"Order Transform Script\":\n<pre>%s</pre>", $output)));
-                } catch (Exception $e) {
-                    $this->log(sprintf('Error saving Order Transform Script output comment on order %s: %s', $result['unique_id'], $e->getMessage()), self::ERR);
-                }
-            }
+            $result = $this->call(
+                'order.create',
+                array($newOrderData['store'],
+                    $newOrderData['items'],
+                    $newOrderData['address'],
+                    $newOrderData['options']
+                )
+            );
+            $this->log(
+                sprintf(
+                    'Created %s Order # %s for WooCommerce Order # %s',
+                    $this->getAppTitle(),
+                    $result['unique_id'],
+                    $wooCommerceOrder['order_increment_id']
+                )
+            );
+            $this->addScriptOutputComment($result['unique_id'], $output);
         } catch (Plugin_Exception $e) {
-            $this->log(sprintf("Failed to submit order: %s\n%s", $e->getMessage(), json_encode($newOrderData)));
-            if (empty($e->getSubjectType())) {
-                $e->setSubject('WooCommerce Order', $wooCommerceOrder['order_increment_id']);
-            }
-
-            $e->setSkipAutoRetry(TRUE); // Do not retry order creations as errors are usually not temporary
-            try {
-                $message = sprintf('Order could not be submitted due to the following error: %s', $e->getMessage());
-                $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-failed-to-submit', $message);
-            } catch (Exception $ex) {
-            }
-
+            $this->logOrderSubmissionFailure($e, $wooCommerceOrder, $newOrderData);
             throw $e;
         } finally {
             $this->_unlockOrderImport();
         }
-
-        // Update WooCommerce order status and add comment
-        $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-submitted', sprintf('Created %s Order # %s', $this->getAppTitle(), $result['unique_id']));
     }
+
+    /**
+     * Adds the script output as a comment to the order.
+     *
+     * @param string $orderId The order ID.
+     * @param string $output The script output.
+     *
+     * @return void
+     */
+    protected function addScriptOutputComment(string $orderId, string $output): void
+    {
+        if ($output) {
+            if (!Mage::getIsDeveloperMode()) {
+                $output = substr($output, 0, 512);
+            }
+
+            try {
+                $this->call(
+                    'order.comment',
+                    array(
+                        $orderId,
+                        sprintf(
+                            "Script output from \"Order Transform Script\":\n<pre>%s</pre>",
+                            $output
+                        )
+                    )
+                );
+            } catch (Exception $e) {
+                $this->log(
+                    sprintf(
+                        'Error saving Order Transform Script output comment on order %s: %s',
+                        $orderId,
+                        $e->getMessage()
+                    ),
+                    self::ERR
+                );
+            }
+        }
+    }
+
+    /**
+     * Logs the failure of order submission.
+     *
+     * @param Plugin_Exception $e The exception.
+     * @param array $wooCommerceOrder Woocommerce order
+     * @param array $newOrderData The new order data.
+     *
+     * @return void
+     */
+    protected function logOrderSubmissionFailure(
+        Plugin_Exception $e,
+        array            $wooCommerceOrder,
+        array $newOrderData
+    ): void
+    {
+        $this->log(
+            sprintf(
+                "Failed to submit order: %s\n%s",
+                $e->getMessage(),
+                json_encode($newOrderData)
+            )
+        );
+        if (empty($e->getSubjectType())) {
+            $e->setSubject(
+                'WooCommerce Order',
+                $wooCommerceOrder['order_increment_id']
+            );
+        }
+
+        $e->setSkipAutoRetry(true); // Do not retry order creations as errors are usually not temporary
+        try {
+            $message = sprintf(
+                'Order could not be submitted due to the following error: %s',
+                $e->getMessage()
+            );
+            $this->addComment(
+                $wooCommerceOrder['order_increment_id'],
+                'wc-failed-to-submit',
+                $message
+            );
+        } catch (Exception $ex) {
+            $this->log(
+                sprintf(
+                    'Order could not be submitted due to the following error: %s',
+                    $ex->getMessage()
+                ),
+                self::ERR
+            );
+        }
+    }
+
+
+    /**
+     * Handles exceptions during the import process.
+     *
+     * @param Exception $e The exception.
+     * @param array $wooCommerceOrder The WooCommerce order data.
+     *
+     * @return void
+     * @throws Exception
+     */
+    protected function handleException(Exception $e, array $wooCommerceOrder): void
+    {
+        if (empty($e->getSubjectType())) {
+            $e->setSubject(
+                'WooCommerce Order',
+                $wooCommerceOrder['order_increment_id']
+            );
+        }
+
+        try {
+            $message = sprintf(
+                'Order could not be submitted due to the following Order Transform Script error: %s',
+                $e->getMessage()
+            );
+            $this->addComment(
+                $wooCommerceOrder['order_increment_id'],
+                'wc-failed-to-submit',
+                $message
+            );
+        } catch (Exception $ex) {
+            $this->log(
+                sprintf(
+                    'Order could not be submitted due to the following Order Transform Script error: %s',
+                    $ex->getMessage()
+                ),
+                self::ERR
+            );
+        }
+
+        throw $e;
+    }
+
+
+    /**
+     * Updates the status of the WooCommerce order.
+     *
+     * @param array $wooCommerceOrder The WooCommerce order data.
+     * @param $orderIncrementId
+     *
+     * @return void
+     * @throws Plugin_Exception
+     */
+    protected function updateWooCommerceOrderStatus(array $wooCommerceOrder, $orderIncrementId): void
+    {
+        $result = $this->call('order.search', [['order_ref' => $orderIncrementId],[], []]);
+        $this->addComment(
+            $wooCommerceOrder['order_increment_id'],
+            'wc-submitted',
+            sprintf(
+                'Created %s Order # %s',
+                $this->getAppTitle(),
+                $result['unique_id']
+            )
+        );
+    }
+
 
     /**
      * Adjust inventory
      *
-     * @param Varien_Object $data
+     * @param Varien_Object $data Variend data object
+     *
+     *
      * @throws Exception
      */
     public function adjustInventoryEvent(Varien_Object $data)
@@ -335,31 +729,68 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
                 continue;
             }
 
-            $this->_wooCommerceApi('shipstream/v1/stock_item/adjust', 'POST', array($sku, (float)$change['qty_adjust']));
-            $this->log(sprintf('Adjusted inventory for the product %s. Adjustment: %.4f.', $sku, $change['qty_adjust']));
+            $this->wooCommerceApi(
+                'shipstream/v1/stock_item/adjust',
+                'POST',
+                array(
+                    $sku,
+                    (float)$change['qty_adjust']
+                )
+            );
+            $this->log(
+                sprintf(
+                    'Adjusted inventory for the product %s. Adjustment: %.4f.',
+                    $sku,
+                    $change['qty_adjust']
+                )
+            );
         }
     }
 
     /**
      * Update WooCommerce order from shipment:packed data
      *
-     * @param Varien_Object $data
+     * @param Varien_Object $data Varien Object
+     *
+     * @return void
+     *
      * @throws Plugin_Exception
      */
-    public function shipmentPackedEvent(Varien_Object $data)
+    public function shipmentPackedEvent(Varien_Object $data): void
     {
-        $clientOrderId = $this->_getWooCommerceShipmentId($data->getSource());
-        $clientOrder = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'POST', $clientOrderId);
+        $clientOrderId = $this->getWooCommerceShipmentId($data->getSource());
+        $clientOrder = $this->wooCommerceApi('shipstream/v1/order_shipment/info', 'POST', $clientOrderId);
 
-        if (!in_array($clientOrder['status'], array('wc-submitted', 'wc-failed-to-submit'))) {
-            throw new Plugin_Exception("Order $clientOrderId status is '{$clientOrder['status']}', expected 'wc-submitted'.");
+        if (!in_array(
+            $clientOrder['status'],
+            array('wc-submitted', 'wc-failed-to-submit')
+        )
+        ) {
+            throw new Plugin_Exception(
+                "Order $clientOrderId status is '{$clientOrder['status']}', expected 'wc-submitted'."
+            );
         }
 
         $payload = $data->getData();
-        $payload['warehouse_name'] = $this->_getWarehouseName($data->getWarehouseId());
-        $wooCommerceShipmentId = $this->_wooCommerceApi('shipstream/v1/order_shipment/create_with_tracking', 'POST', array($clientOrderId, $payload));
+        $payload['warehouse_name'] = $this->_getWarehouseName(
+            $data->getWarehouseId()
+        );
+        $wooCommerceShipmentId = $this->wooCommerceApi(
+            'shipstream/v1/order_shipment/create_with_tracking',
+            'POST',
+            array(
+                $clientOrderId,
+                $payload
+            )
+        );
 
-        $this->log(sprintf('Created WooCommerce shipment # %s for order # %s', $wooCommerceShipmentId, $clientOrderId));
+        $this->log(
+            sprintf(
+                'Created WooCommerce shipment # %s for order # %s',
+                $wooCommerceShipmentId,
+                $clientOrderId
+            )
+        );
     }
 
     /****************************
@@ -369,100 +800,130 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     /**
      * Respond to the delivery committed webhook
      *
-     * @param Varien_Object $data
+     * @param Varien_Object $data Varien Object data
+     *
+     * @return void
+     * @throws Plugin_Exception
      */
-    public function respondDeliveryCommitted(Varien_Object $data)
+    public function respondDeliveryCommitted(Varien_Object $data): void
     {
-        $this->addEvent('adjustInventoryEvent', array('stock_adjustments' => $data->getStockAdjustments()));
+        $this->addEvent(
+            'adjustInventoryEvent',
+            array(
+                'stock_adjustments' => $data->getStockAdjustments()
+            )
+        );
     }
 
     /**
      * Respond to the inventory adjustment webhook
      *
-     * @param Varien_Object $data
+     * @param Varien_Object $data Varien Object data
+     *
+     * @throws Plugin_Exception
      */
     public function respondInventoryAdjusted(Varien_Object $data)
     {
-        $this->addEvent('adjustInventoryEvent', array('stock_adjustments' => $data->getStockAdjustments()));
+        $this->addEvent(
+            'adjustInventoryEvent',
+            array(
+                'stock_adjustments' => $data->getStockAdjustments()
+            )
+        );
     }
 
     /**
      * Respond to shipment:packed event, completes the fulfillment
      *
-     * @param Varien_Object $data
+     * @param Varien_Object $data Varien Object data
+     *
+     * @throws Plugin_Exception
      */
     public function respondShipmentPacked(Varien_Object $data)
     {
-        if ($this->_getWooCommerceShipmentId($data->getSource())) {
+        if ($this->getWooCommerceShipmentId($data->getSource())) {
             $this->addEvent('shipmentPackedEvent', $data->toArray());
         }
     }
 
-   
-/************************
+
+    /**
+     * **********************
      * Callbacks (<routes>) *
-     ************************/
+     * **********************
+     */
 
     /**
      * Inventory with order import lock request handler
      *
-     * @param array $query
+     * @param array $query Inventory Data
+     *
      * @return string
-     * @throws Plugin_Exception
      */
-    public function inventoryWithLock($query)
+    public function inventoryWithLock(array $query): string
     {
         $result = $skus = array();
         try {
             $this->_lockOrderImport();
-            $rows = $this->call('inventory.list', empty($query['sku']) ? NULL : strval($query['sku']));
+            $rows = $this->call(
+                'inventory.list',
+                empty($query['sku']) ? null : (string)$query['sku']
+            );
             foreach ($rows as $row) {
-                $qtyAdvertised = intval($row['qty_advertised']);
-                $qtyBackOrdered = intval($row['qty_backordered']);
-                $skus[$row['sku']] = $qtyAdvertised > 0 ? $qtyAdvertised : -$qtyBackOrdered;
+                $qtyAdvertised = (int)$row['qty_advertised'];
+                $qtyBackOrdered = (int)$row['qty_backordered'];
+                $skus[$row['sku']] = $qtyAdvertised > 0
+                    ? $qtyAdvertised
+                    : -$qtyBackOrdered;
             }
 
             $result['skus'] = $skus;
         } catch (Plugin_Exception $e) {
             $result['errors'] = $e->getMessage();
         } catch (Exception $e) {
-            $result['errors'] = 'An unexpected error occurred while retrieving the inventory.';
+            $result['errors'] = 'An unexpected error occurred while retrieving the inventory.' . $e->getMessage();
         }
 
         return json_encode($result);
     }
 
-    /**
-     * @throws Plugin_Exception
-     */
-    public function unlockOrderImport()
+
+    public function unlockOrderImport(): bool
     {
         $this->_unlockOrderImport();
         return TRUE;
     }
 
     /**
-     * @throws Plugin_Exception
+     * Call lock order to import
+     *
+     * @return bool
+     * @throws Plugin_Exception|Exception
+     *
      */
-    public function lockOrderImport()
+    public function lockOrderImport(): bool
     {
         $this->_lockOrderImport();
-        return TRUE;
+        return true;
     }
 
     /**
      * Callback to import an order.
      *
-     * @param array $query
+     * @param array $query Order Query data
+     *
      * @return string|true
      */
-    public function syncOrder($query)
+    public function syncOrder(array $query): bool|string
     {
         if (isset($query['increment_id'])) {
             try {
-                $this->addEvent('importOrderEvent', array('increment_id' => $query['increment_id']));
-                return TRUE;
-            } catch (Throwable $e) {
+                $this->addEvent(
+                    'importOrderEvent',
+                    array('increment_id' => $query['increment_id'])
+                );
+                return true;
+            } catch (Exception $e) {
                 $error = $e->getMessage();
             }
         } else {
@@ -477,75 +938,153 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      *********************/
 
     /**
-     * Import orders
+     * Import orders within a given date range and statuses.
      *
-     * @param null|string $from
+     * @param string|null $from Date from which to start importing orders.
+     *
      * @return void
+     * @throws Exception
      */
-    protected function _importOrders($from = NULL)
+    protected function _importOrders(string $from = null): void
     {
-        // Do not import orders while inventory is being synced
-        $state = $this->getState(self::STATE_LOCK_ORDER_PULL, TRUE);
-        if (! empty($state['value']) && $state['value'] == 'locked') {
-            return $this->log(sprintf('Order import is currently locked. Please unlock it to proceed with importing orders.'));
+        if ($this->isOrderImportLocked()) {
+            $this->log(
+                sprintf(
+                    'Order import is currently locked. %s',
+                    'Please unlock it to proceed with importing orders.'
+                )
+            );
         }
 
-        $now = time();
-        $limit = 100;
-        if (is_null($from)) {
+        list($from, $to) = $this->getDateRange($from);
+        $statuses = $this->getAutoFulfillStatuses();
+
+        if ($statuses) {
+            $this->processOrders($from, $to, $statuses);
+        }
+    }
+
+    /**
+     * Check if the order import is locked.
+     *
+     * @return bool
+     * @throws Exception
+     */
+    protected function isOrderImportLocked(): bool
+    {
+        $state = $this->getState(self::STATE_LOCK_ORDER_PULL, true);
+        return !empty($state['value']) && $state['value'] == 'locked';
+    }
+
+    /**
+     * Get the date range for importing orders.
+     *
+     * @param string|null $from Date from which to start importing orders.
+     *
+     * @return array
+     * @throws Exception
+     */
+    protected function getDateRange(?string $from): array
+    {
+        $now = strtotime("now");
+        $dateTime = new DateTime();
+        if ($from == null) {
             $from = $this->getConfig(self::STATE_ORDER_LAST_SYNC_AT);
             if (empty($from)) {
-                $from = date(self::DATE_FORMAT, $now - (86400*5)); // Go back up to 5 days
+                $from = $dateTime->createFromFormat(
+                    self::DATE_FORMAT,
+                    $now - (86400 * 5)
+                );
             }
         } else {
             $from .= ' 00:00:00';
         }
 
         $to = date(self::DATE_FORMAT, $now);
+        return array($from, $to);
+    }
 
-        // Order statuses for which orders should be automatically fulfilled
+    /**
+     * Get the order statuses for automatic fulfillment.
+     *
+     * @return array|null
+     * @throws Exception
+     */
+    protected function getAutoFulfillStatuses(): ?array
+    {
         $status = $this->getConfig('auto_fulfill_status');
         if ($status === 'custom') {
             $statuses = $this->getConfig('auto_fulfill_custom');
-            $statuses = preg_split('/\s*,\s*/', trim($statuses), -1, PREG_SPLIT_NO_EMPTY);
-            if (! is_array($statuses)) {
+            $statuses = preg_split(
+                '/\s*,\s*/',
+                trim($statuses),
+                -1,
+                PREG_SPLIT_NO_EMPTY
+            );
+            if (!is_array($statuses)) {
                 $statuses = $statuses ? array($statuses) : array();
             }
 
             // Sanitize - map "Ready To Ship" to "ready_to_ship"
             $statuses = array_map(
-                function($status) {
-                return strtolower(str_replace(' ', '_', $status));
-                }, $statuses
+                function ($status) {
+                    return strtolower(str_replace(' ', '_', $status));
+                },
+                $statuses
             );
-        } else if ($status && $status !== '-') {
+        } elseif ($status && $status !== '-') {
             $statuses = array(strtolower(str_replace(' ', '_', $status)));
         } else {
-            $statuses = NULL;
+            $statuses = null;
         }
 
-        // Automatic fulfillment. When a new order is found in the specified statuses,
-        // an order should be created on the ShipStream side and status updated to Submitted.
-        if ($statuses) {
-            do {
-                $updatedAtMin = $from;
-                $updatedAtMax = $to;
-                $filters = array(
-                    'date_updated_gmt' => array('from' => $updatedAtMin, 'to' => $updatedAtMax),
-                    'status' => array('in' => $statuses),
-                );
-                $data = $this->_wooCommerceApi('shipstream/v1/order/list', 'POST', $filters);
-                foreach ($data as $orderData) {
-                    if (strcmp($orderData['date_modified']['date'], $updatedAtMin) > 0) {
-                        $updatedAtMin = date('c', strtotime($orderData['date_modified']['date'])+1);
-                    }
+        return $statuses;
+    }
 
-                    $this->addEvent('importOrderEvent', array('increment_id' => $orderData['id']));
-                    $this->log(sprintf('Queued import for order %s', $orderData['id']));
+    /**
+     * Process orders within the given date range and statuses.
+     *
+     * @param string $from Start date for the order import.
+     * @param string $to End date for the order import.
+     * @param array $statuses Array of order statuses to filter by.
+     *
+     * @return void
+     * @throws Plugin_Exception
+     */
+    protected function processOrders(string $from, string $to, array $statuses): void
+    {
+        $limit = 100;
+        do {
+            $updatedAtMin = $from;
+            $updatedAtMax = $to;
+            $filters = array(
+                'date_updated_gmt' => array(
+                    'from' => $updatedAtMin,
+                    'to' => $updatedAtMax
+                ),
+                'status' => array('in' => $statuses),
+            );
+            $data = $this->wooCommerceApi(
+                'shipstream/v1/order/list',
+                'POST',
+                $filters
+            );
+            foreach ($data as $orderData) {
+                if (strcmp($orderData['date_modified']['date'], $updatedAtMin) > 0) {
+                    $updatedAtMin = date(
+                        'c',
+                        strtotime($orderData['date_modified']['date']) + 1
+                    );
                 }
-            } while (count($data) == $limit && strcmp($updatedAtMin, $updatedAtMax) < 0);
-            $this->setState(self::STATE_ORDER_LAST_SYNC_AT, $updatedAtMax);
-        }
+
+                $this->addEvent(
+                    'importOrderEvent',
+                    array('increment_id' => $orderData['id'])
+                );
+                $this->log(sprintf('Queued import for order %s', $orderData['id']));
+            }
+        } while (count($data) == $limit && strcmp($updatedAtMin, $updatedAtMax) < 0);
+        $this->setState(self::STATE_ORDER_LAST_SYNC_AT, $updatedAtMax);
     }
 
     /**
@@ -554,14 +1093,17 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @return bool
      * @throws Exception
      */
-    protected function _lockOrderImport()
+    public function _lockOrderImport(): bool
     {
         $seconds = 0;
         do {
-            $state = $this->getState(self::STATE_LOCK_ORDER_PULL, TRUE);
-            if (empty($state['value']) || empty($state['date_updated_gmt']) || $state['value'] == 'unlocked') {
+            $state = $this->getState(self::STATE_LOCK_ORDER_PULL, true);
+            if (empty($state['value'])
+                || empty($state['date_updated_gmt'])
+                || $state['value'] == 'unlocked'
+            ) {
                 if ($this->setState(self::STATE_LOCK_ORDER_PULL, 'locked')) {
-                    return TRUE;
+                    return true;
                 }
             }
 
@@ -571,13 +1113,13 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             // Consider the lock to be stale if it is older than 1 minute
             if ($interval->i >= 1) {
                 if ($this->setState(self::STATE_LOCK_ORDER_PULL, 'locked')) {
-                    return TRUE;
+                    return true;
                 }
             }
 
             sleep(1);
             $seconds++;
-        } while($seconds < 20);
+        } while ($seconds < 20);
 
         throw new Plugin_Exception('Cannot lock order importing.');
     }
@@ -587,94 +1129,195 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      *
      * @return void
      */
-    protected function _unlockOrderImport()
+    protected function _unlockOrderImport(): void
     {
         try {
             $this->setState(self::STATE_LOCK_ORDER_PULL, 'unlocked');
         } catch (Exception $e) {
-            $this->log(sprintf('Cannot unlock order importing. Error: %s', $e->getMessage()));
+            $this->log(
+                sprintf(
+                    'Cannot unlock order importing. Error: %s', $e->getMessage()
+                )
+            );
         }
     }
 
 
     /**
-     * Method is originally used for mapping Shopify shipping_lines to ShipStream shipping.
-     * Reused as is for WooCommerce.
+     * Extracts the shipping method from the provided data.
      *
-     * Map Shopify shipping method
+     * @param array $data The input data containing shipping lines.
      *
-     * @param array $data
-     * @return string
-     * @throws Plugin_Exception
+     * @return string The identified shipping method.
+     * @throws Plugin_Exception When error in the shipping method rules.
      */
-    protected function _getShippingMethod($data)
+    protected function getShippingMethod(array $data): string
+    {
+        $shippingLines = $this->getShippingLines($data);
+        $rules = $this->getShippingRules();
+
+        return $this->identifyShippingMethod($shippingLines, $rules);
+    }
+
+    /**
+     * Retrieves the shipping lines from the input data,
+     * ensuring there is at least a default value.
+     *
+     * @param array $data Data containing shipping lines and other information.
+     *
+     * @return array The shipping lines.
+     */
+    protected function getShippingLines(array $data): array
     {
         $shippingLines = $data['shipping_lines'];
         if (empty($shippingLines)) {
-            $shippingLines = array(array('shipping_description' => 'unknown', 'shipping_method' => 'unknown'));
+            $shippingLines = array(
+                array(
+                    'shipping_description' => 'unknown',
+                    'shipping_method' => 'unknown'
+                )
+            );
         }
 
-        // Extract shipping method
-        $_shippingMethod = NULL;
+        return $shippingLines;
+    }
+
+    /**
+     * Retrieves and decodes the shipping method rules from configuration.
+     *
+     * @return array The decoded shipping method rules.
+     * @throws Plugin_Exception|Exception If the rules are invalid.
+     */
+    protected function getShippingRules(): array
+    {
         $rules = $this->getConfig('shipping_method_config');
-        $rules = json_decode($rules, TRUE);
-        $rules = empty($rules) ? array() : $rules;
+        $rules = json_decode($rules, true);
+        return empty($rules) ? array() : $rules;
+    }
+
+    /**
+     * Identifies the shipping method based on the provided shipping lines and rules.
+     *
+     * @param array $shippingLines The shipping lines.
+     * @param array $rules The shipping method rules.
+     *
+     * @return string The identified shipping method.
+     * @throws Plugin_Exception If a rule is invalid.
+     */
+    protected function identifyShippingMethod(array $shippingLines, array $rules): string
+    {
+        $_shippingMethod = null;
 
         foreach ($shippingLines as $shippingLine) {
-            if ($_shippingMethod === NULL) {
-                $_shippingMethod = $shippingLine['shipping_method'] ?? NULL;
+            if ($_shippingMethod === null) {
+                $_shippingMethod = $shippingLine['shipping_method'] ?? null;
             }
 
             foreach ($rules as $rule) {
-                if (count($rule) != 4) {
-                    throw new Plugin_Exception('Invalid shipping method rule.');
-                }
-
-                foreach (array('shipping_method', 'field', 'operator', 'pattern') as $field) {
-                    if (empty($rule[$field])) {
-                        throw new Plugin_Exception('Invalid shipping method rule.');
-                    }
-                }
+                $this->validateRule($rule);
 
                 list($shippingMethod, $field, $operator, $pattern) = array(
-                    $rule['shipping_method'], $rule['field'], $rule['operator'], $rule['pattern']
+                    $rule['shipping_method'],
+                    $rule['field'],
+                    $rule['operator'],
+                    $rule['pattern']
                 );
-                $compareValue = empty($shippingLine[$field]) ? '' : $shippingLine[$field];
-                if ($operator == '=~') {
-                    if (@preg_match('/^'.$pattern.'$/i', NULL, $matches) === FALSE && $matches === NULL) {
-                        throw new Plugin_Exception('Invalid RegEx expression after "=~" operator', NULL, NULL, 'Get shipping method');
-                    }
-
-                    if (preg_match('/^'.$pattern.'$/i', $compareValue)) {
-                        $_shippingMethod = $shippingMethod;
-                        break 2;
-                    }
+                $compareValue = '';
+                if (!empty($shippingLine[$field])) {
+                    $compareValue = $shippingLine[$field];
                 }
-                else {
-                    $pattern = str_replace(array('"', "'"), '', $pattern);
-                    if ($operator == '=' && $compareValue == $pattern) {
-                        $_shippingMethod = $shippingMethod;
-                        break 2;
-                    }
-                    else {
-                        if ($operator == '!=' && $compareValue != $pattern) {
-                            $_shippingMethod = $shippingMethod;
-                            break 2;
-                        }
-                    }
+
+                if ($this->matchesRule($compareValue, $operator, $pattern)) {
+                    $_shippingMethod = $shippingMethod;
+                    break 2;
                 }
             }
         }
 
         if (empty($_shippingMethod)) {
-            throw new Plugin_Exception('Cannot identify shipping method.', NULL, NULL, 'Get shipping method');
+            throw new Plugin_Exception(
+                'Cannot identify shipping method.',
+                null,
+                null,
+                'Get shipping method'
+            );
         }
 
         return $_shippingMethod;
     }
 
+    /**
+     * Validates a shipping method rule.
+     *
+     * @param array $rule The rule to validate.
+     *
+     * @return void
+     * @throws Plugin_Exception If the rule is invalid.
+     */
+    protected function validateRule(array $rule): void
+    {
+        if (count($rule) != 4) {
+            throw new Plugin_Exception('Invalid shipping method rule.');
+        }
 
-    protected function _checkItem(array $item)
+        foreach (array('shipping_method', 'field', 'operator', 'pattern') as $field) {
+            if (empty($rule[$field])) {
+                throw new Plugin_Exception('Invalid shipping method rule.');
+            }
+        }
+    }
+
+    /**
+     * Determines if a shipping line value matches
+     * a rule based on the operator and pattern.
+     *
+     * @param string $compareValue The value to compare.
+     * @param string $operator The operator to use for comparison.
+     * @param string $pattern The pattern to compare against.
+     *
+     * @return bool true if the value matches the rule, false otherwise.
+     *
+     * @throws Plugin_Exception If a RegEx expression is invalid.
+     */
+    protected function matchesRule(string $compareValue, string $operator, string $pattern): bool
+    {
+        if ($operator == '=~') {
+            if (@preg_match(
+                    '/^' . $pattern . '$/i',
+                    null,
+                    $matches
+                ) === false && $matches === null
+            ) {
+                throw new Plugin_Exception(
+                    'Invalid RegEx expression after "=~" operator',
+                    null,
+                    null,
+                    'Get shipping method'
+                );
+            }
+
+            return preg_match('/^' . $pattern . '$/i', $compareValue);
+        } else {
+            $pattern = str_replace(array('"', "'"), '', $pattern);
+            if ($operator == '=' && $compareValue == $pattern) {
+                return true;
+            } elseif ($operator == '!=' && $compareValue != $pattern) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
+    /**
+     * Check if the item is a simple product
+     *
+     * @param array $item Order Item
+     *
+     * @return bool
+     */
+    protected function _checkItem(array $item): bool
     {
         return (isset($item['product_type']) && $item['product_type'] == 'simple');
     }
@@ -682,38 +1325,69 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     /**
      * Update WooCommerce order status and add comment.
      *
-     * @param string $orderIncrementId 
-     * @param string $orderStatus 
-     * @param string $comment 
-     * @return void 
+     * @param string $orderIncrementId Order ID
+     * @param string $orderStatus Order Status
+     * @param string $comment App Title
+     * @param string $appTitle App Title
+     * @param string $shipstreamId Ship Stream ID
+     *
+     * @return void
      */
-    protected function _addComment(string $orderIncrementId, string $orderStatus, string $comment = '', string $appTitle = '', string $shipstreamId = '')
+    protected function addComment(
+        string $orderIncrementId,
+        string $orderStatus,
+        string $comment = '',
+        string $appTitle = '',
+        string $shipstreamId = ''
+    ): void
     {
         try {
-            $comment_data = array(
-                'order_id'      => $orderIncrementId,
-                'status'        => $orderStatus,
-                'comment'       => $comment,
-                'apptitle'      => $appTitle,
-                'shipstreamid'  => $shipstreamId,
+            $commentData = array(
+                'order_id' => $orderIncrementId,
+                'status' => $orderStatus,
+                'comment' => $comment,
+                'apptitle' => $appTitle,
+                'shipstreamid' => $shipstreamId,
             );
-            $data = $this->_wooCommerceApi('shipstream/v1/order/addComment', 'POST', $comment_data);
-            $message = sprintf('Status of order # %s was changed to %s in merchant site, comment: %s', $orderIncrementId, $orderStatus, $comment);
+            $this->wooCommerceApi(
+                'shipstream/v1/order/addComment',
+                'POST',
+                $commentData
+            );
+            $message = sprintf(
+                'Status of order # %s was changed
+                to %s in merchant site, comment: %s',
+                $orderIncrementId,
+                $orderStatus,
+                $comment
+            );
             $this->log($message);
         } catch (Throwable $e) {
-            $message = sprintf('Order status could not be changed in merchant site due to the following error: %s', $e->getMessage());
+            $message = sprintf(
+                'Order status could not be changed in merchant
+                site due to the following error: %s',
+                $e->getMessage()
+            );
             $this->log($message, self::ERR);
         }
     }
 
     /**
-     * @param string $endpoint
-     * @param string $method
-     * @param array $params
+     * Call the woocommerce API
+     *
+     * @param string $endpoint API end point
+     * @param string $method API method
+     * @param array $params API params
+     *
      * @return array
+     *
      * @throws Plugin_Exception
      */
-    protected function _wooCommerceApi($endpoint, $method = 'POST', $params = array())
+    protected function wooCommerceApi(
+        string $endpoint,
+        string $method = 'POST',
+        array $params = array()
+    ): array
     {
         try {
             return $this->getClient()->request($endpoint, $method, $params);
@@ -723,16 +1397,21 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     }
 
     /**
+     * Get ShipStream_WooCommerce_Client instance
+     *
      * @return ShipStream_WooCommerce_Client
+     * @throws Exception
+     *
+     * @throws Plugin_Exception
      */
-    protected function getClient()
+    protected function getClient(): ShipStream_WooCommerce_Client
     {
         if (!$this->_client) {
             $this->_client = new ShipStream_WooCommerce_Client(
                 array(
-                'base_url' => $this->getConfig('api_url'),
-                'consumer_key' => $this->getConfig('api_login'),
-                'consumer_secret' => $this->getConfig('api_password'),
+                    'base_url' => $this->getConfig('api_url'),
+                    'consumer_key' => $this->getConfig('api_login'),
+                    'consumer_secret' => $this->getConfig('api_password'),
                 )
             );
         }
@@ -740,42 +1419,96 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
         return $this->_client;
     }
 
+    /**
+     * Validate the given date
+     *
+     * @param string $date Date to validate
+     *
+     * @return bool
+     */
     protected function validateDate(string $date): bool
     {
         return preg_match(self::DATE_PATTERN, $date);
     }
 
     /**
-     * @param array $wooCommerceAddress
+     * Format the shipping address
+     *
+     * @param array $wooCommerceAddress Woocommerce shipping address
+     *
      * @return array
      */
     protected function formatShippingAddress(array $wooCommerceAddress): array
     {
+        $address = $firstName = $lastName = $company = '';
+        $city = $state = $postCode = $country = $phone = '';
+
+
+        if (isset($wooCommerceAddress['address_1'])) {
+            $address = $wooCommerceAddress['address_1'];
+
+            if (isset($wooCommerceAddress['address_2'])) {
+                $address .= ' ' . $wooCommerceAddress['address_2'];
+            }
+        }
+
+        if (isset($wooCommerceAddress['first_name'])) {
+            $firstName = $wooCommerceAddress['first_name'];
+        }
+
+        if (isset($wooCommerceAddress['last_name'])) {
+            $lastName = $wooCommerceAddress['last_name'];
+        }
+
+        if (isset($wooCommerceAddress['company'])) {
+            $company = $wooCommerceAddress['company'];
+        }
+
+        if (isset($wooCommerceAddress['city'])) {
+            $city = $wooCommerceAddress['city'];
+        }
+
+        if (isset($wooCommerceAddress['state'])) {
+            $state = $wooCommerceAddress['state'];
+        }
+
+        if (isset($wooCommerceAddress['postcode'])) {
+            $postCode = $wooCommerceAddress['postcode'];
+        }
+
+        if (isset($wooCommerceAddress['country'])) {
+            $country = $wooCommerceAddress['country'];
+        }
+
+        if (isset($wooCommerceAddress['phone'])) {
+            $phone = $wooCommerceAddress['phone'];
+        }
+
         return array(
-            'firstname' => isset($wooCommerceAddress['first_name']) ? $wooCommerceAddress['first_name'] : '',
-            'lastname' => isset($wooCommerceAddress['last_name']) ? $wooCommerceAddress['last_name'] : '',
-            'company' => isset($wooCommerceAddress['company']) ? $wooCommerceAddress['company'] : '',
-            'street1' => isset($wooCommerceAddress['address_1']) ? $wooCommerceAddress['address_1'] . ' ' . (isset($wooCommerceAddress['address_2']) ? $wooCommerceAddress['address_2'] : '') : '',
-            'city' => isset($wooCommerceAddress['city']) ? $wooCommerceAddress['city'] : '',
-            'region' => isset($wooCommerceAddress['state']) ? $wooCommerceAddress['state'] : '',
-            'postcode' => isset($wooCommerceAddress['postcode']) ? $wooCommerceAddress['postcode'] : '',
-            'country' => isset($wooCommerceAddress['country']) ? $wooCommerceAddress['country'] : '',
-            'telephone' => isset($wooCommerceAddress['phone']) ? $wooCommerceAddress['phone'] : ''
+            'firstname' => $firstName,
+            'lastname' => $lastName,
+            'company' => $company,
+            'street1' => $address,
+            'city' => $city,
+            'region' => $state,
+            'postcode' => $postCode,
+            'country' => $country,
+            'telephone' => $phone,
         );
     }
 
 
     /**
-     * @param array $wooCommerceItems
+     * Get Order Item
+     *
+     * @param array $wooCommerceItems Woocommerce Item
+     *
      * @return array
      */
     protected function getOrderItems(array $wooCommerceItems): array
     {
         $orderItems = array();
         foreach ($wooCommerceItems as $item) {
-            // if (isset($item['product_type']) && $item['product_type'] == 'simple') {
-            //     continue;
-            // }
             $orderItems[] = array(
                 'sku' => $item['sku'],
                 'name' => $item['name'],
@@ -787,11 +1520,20 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     }
 
     /**
-     * @param array $orderData
-     * @param array $wooCommerceOrder
-     * @param string $logPrefix
+     * Process the order by script
+     *
+     * @param array $orderData Order Data
+     * @param array $wooCommerceOrder Woocommerce Order
+     * @param string $logPrefix Log Prefix
+     *
+     * @return void
+     * @throws Exception
      */
-    protected function processOrderTransformScript(array &$orderData, array $wooCommerceOrder, string $logPrefix)
+    protected function processOrderTransformScript(
+        array  &$orderData,
+        array  $wooCommerceOrder,
+        string $logPrefix
+    ): void
     {
         if ($script = $this->getConfig('order_transform_script')) {
             eval($script);
@@ -800,12 +1542,21 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     }
 
     /**
-     * @param array $newOrderData
-     * @param array $wooCommerceOrder
-     * @param string $logPrefix
+     * Import Order by order data
+     *
+     * @param array $newOrderData Order Data
+     * @param array $wooCommerceOrder Woocommerce Order
+     * @param string $logPrefix Log prefix
+     *
+     * @return void
      * @throws Plugin_Exception
+     *
      */
-    protected function submitOrder(array $newOrderData, array $wooCommerceOrder, string $logPrefix)
+    protected function submitOrder(
+        array  $newOrderData,
+        array  $wooCommerceOrder,
+        string $logPrefix
+    ): void
     {
         $this->log($logPrefix . 'Submitting Order...');
         try {
@@ -814,35 +1565,60 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
                 throw new Plugin_Exception($result['message']);
             }
 
-            $this->log($logPrefix . sprintf('Order Submitted to ShipStream: Order # %s', $result['unique_id']));
-            $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-submitted', sprintf('Submitted to ShipStream: Order # %s', $this->getAppTitle(), $result['unique_id']));
+            $this->log(
+                $logPrefix . sprintf(
+                    'Order Submitted to ShipStream: Order # %s', $result['unique_id']
+                )
+            );
+            $this->addComment(
+                $wooCommerceOrder['order_increment_id'],
+                'wc-submitted',
+                sprintf(
+                    'Submitted to ShipStream: Order # %s',
+                    $result['unique_id']
+                )
+            );
         } catch (Exception $e) {
-            $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-failed-to-submit', sprintf('Failed to Submit to ShipStream: %s', $this->getAppTitle()));
+            $this->addComment(
+                $wooCommerceOrder['order_increment_id'],
+                'wc-failed-to-submit',
+                sprintf(
+                    'Failed to Submit to ShipStream: %s',
+                    $this->getAppTitle()
+                )
+            );
             throw new Plugin_Exception($e->getMessage());
         }
     }
 
     /**
-     * @param string $source
-     * @return string|null
+     * Get woocommerce shipment ID
+     *
+     * @param string $source shipment source
+     *
+     * @return string|null shipment ID or null if not found
      */
-    protected function _getWooCommerceShipmentId(string $source): ?string
+    protected function getWooCommerceShipmentId(string $source): ?string
     {
-        if (strpos($source, 'woocommerce_shipment:') === 0) {
+        if (str_starts_with($source, 'woocommerce_shipment:')) {
             return substr($source, strlen('woocommerce_shipment:'));
         }
 
-        return NULL;
+        return null;
     }
 
-    /**
-     * @param int $warehouseId
-     * @return string|null
-     */
 
+    /**
+     * Get warehouse name by ID
+     *
+     * @param int $warehouseId warehouse ID to get name
+     *
+     * @return string|null
+     * @throws Plugin_Exception
+     */
     protected function _getWarehouseName(int $warehouseId): ?string
     {
         $warehouse = $this->call('warehouse.get', array($warehouseId));
-        return $warehouse['name'] ?? NULL;
+        return $warehouse['name'] ?? null;
     }
 }

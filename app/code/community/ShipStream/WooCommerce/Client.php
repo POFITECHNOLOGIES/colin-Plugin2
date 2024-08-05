@@ -106,46 +106,45 @@ class ShipStream_WooCommerce_Client
         array $params = array()
     ) {
         $url = $this->config['base_url'] . $endpoint;
-        $curl = new Varien_Http_Adapter_Curl();
+        $curl = curl_init();
         $headers = array(
-            'Authorization: Basic ' . $this->token,
+            'Authorization: Basic ' . $this->_token,
             'Content-Type: application/json'
         );
 
         switch ($method) {
-        case 'POST':
-            $curl->setOption($curl, CURLOPT_POST, true);
-            $curl->setOption(CURLOPT_POSTFIELDS, json_encode($params));
-            break;
-        case 'PUT':
-            $curl->setOption(CURLOPT_CUSTOMREQUEST, 'PUT');
-            $curl->setOption(CURLOPT_POSTFIELDS, json_encode($params));
-            break;
-        case 'DELETE':
-            $curl->setOption(CURLOPT_CUSTOMREQUEST, 'DELETE');
-            break;
-        default:
-            if (!empty($params)) {
-                $url .= '?' . http_build_query($params);
-            }
+            case 'POST':
+                curl_setopt($curl, CURLOPT_POST, true);
+                curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($params));
+                break;
+            case 'PUT':
+                curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'PUT');
+                curl_setopt($curl, CURLOPT_POSTFIELDS, json_encode($params));
+                break;
+            case 'DELETE':
+                curl_setopt($curl, CURLOPT_CUSTOMREQUEST, 'DELETE');
+                break;
+            default:
+                if (!empty($params)) {
+                    $url .= '?' . http_build_query($params);
+                }
         }
 
-        $curl->setOption(CURLOPT_URL, $url);
-        $curl->setOption(CURLOPT_RETURNTRANSFER, true);
-        $curl->setOption(CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($curl, CURLOPT_URL, $url);
+        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($curl, CURLOPT_HTTPHEADER, $headers);
 
         // Bypass SSL verification
-        $curl->setOption(CURLOPT_SSL_VERIFYPEER, false);
-        $curl->setOption(CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($curl, CURLOPT_SSL_VERIFYHOST, false);
 
+        $response = curl_exec($curl);
 
-        $response = $curl->read();
-
-        if ($curl->getError()) {
-            Mage::throwException('Request Error: ' . $curl->getError());
+        if (curl_errno($curl)) {
+            Mage::throwException('Request Error: ' . curl_error($curl));
         }
 
-        $curl->close();
+        curl_close($curl);
 
         return json_decode($response, true);
     }
