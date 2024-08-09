@@ -46,6 +46,11 @@ class ShipStream_API {
                 'callback' => array(__CLASS__, 'add_order_comment'),
                 'permission_callback' => array(__CLASS__, 'authenticate'),
             ));
+            register_rest_route('shipstream/v1', '/order/status_update', array(
+                'methods' => 'POST',
+                'callback' => array(__CLASS__, 'updateOrderStatus'),
+                'permission_callback' => array(__CLASS__, 'authenticate'),
+            ));
         });
     }
 
@@ -97,7 +102,7 @@ class ShipStream_API {
 
 
     // Get information about WordPress, WooCommerce, and plugin versions
-    public static function get_info($request) {
+    public static function get_info(WP_REST_Request $request) {
         $wc_version = get_option('woocommerce_version', 'N/A');
 
         $plugin_file_path = WP_PLUGIN_DIR . '/woocommerce-shipstream-sync/woocommerce-shipstream-sync.php';
@@ -120,7 +125,7 @@ class ShipStream_API {
     }
 
     // Set configuration values
-    public static function set_config($request) {
+    public static function set_config(WP_REST_Request $request) {
         $path = $request->get_param('path');
         $value = $request->get_param('value');
 
@@ -143,18 +148,18 @@ class ShipStream_API {
     }
 
     // Sync inventory
-    public static function sync_inventory($request) {
+    public static function sync_inventory(WP_REST_Request $request) {
         try {
             ShipStream_Cron::full_inventory_sync(false);
         } catch (Exception $e) {
             error_log($e->getMessage());
             return new WP_REST_Response(array('success' => false, 'message' => $e->getMessage()), 500);
         }
-        return new WP_REST_Response(array('success' => true), 200);
+        return new WP_REST_Response(array('success' => true,'message' => 'Inventory synced successfully.'), 200);
     }
 
     // Adjust stock item quantity
-    public static function adjust_stock_item($request) {
+    public static function adjust_stock_item(WP_REST_Request $request) {
         $product_id = $request->get_param('product_id');
         $delta = $request->get_param('delta');
 
@@ -216,7 +221,7 @@ class ShipStream_API {
     }
 
     // Get order shipment information
-    public static function get_order_shipment_info($request) {
+    public static function get_order_shipment_info(WP_REST_Request $request) {
         $shipment_id = $request->get_param('shipment_id');
         if (empty($shipment_id)) {
             return new WP_REST_Response(array('error' => 'Shipment ID parameter is required'), 400);
@@ -265,200 +270,95 @@ class ShipStream_API {
         return new WP_REST_Response($result, 200);
     }
 
-    // Create order shipment with tracking information
-    public function create_order_shipment_with_tracking($orderIncrementId, $data) {
-        $order = wc_get_order($orderIncrementId);
+    public static function create_order_shipment_with_tracking($shipment_data) {
+        $order_increment_id = $shipment_data['orderIncrementId'];
+        $order_data = $shipment_data['data'];
+
+        // Fetch the order using the increment ID
+        $order = wc_get_order($order_increment_id);
         if (!$order) {
-            throw new Exception('Order not exists');
-        }
-        if ($order->get_status() !== 'wc-processing') {
-            throw new Exception(__('Cannot do shipment for order.', 'woocommerce'));
+            return;
         }
 
-        $itemsQty = [];
-        if ($data['order_status'] !== "wc-complete") {
-            $itemsQty = $this->_getShippedItemsQty($order, $data);
-            if (sizeof($itemsQty) === 0) {
-                throw new Exception(__('Decimal qty is not allowed to ship in WooCommerce', 'woocommerce'));
+        // Add tracking numbers to the order using the Shipment Tracking extension
+        foreach ($order_data['packages'] as $package) {
+            foreach ($package['tracking_numbers'] as $tracking_number) {
+                self::add_tracking_number_to_order($order->get_id(), $tracking_number, $order_data['carrier']);
             }
         }
 
-        $comments = $this->_getCommentsData($order, $data);
+        // Update the order's line items with shipment info data
+        self::update_order_line_items_with_shipment_info($order->get_id(), $order_data);
 
-        $tracks = [];
-        $carriers = $this->_getCarriers($order);
-
-        $carrier = $data['carrier'];
-        if (!isset($carriers[$carrier])) {
-            $carrier = 'custom';
-            $title = $data['service_description'];
-        } else {
-            $title = $carriers[$carrier];
+        // Check if all items are shipped and mark order as completed
+        if ($order_data['status'] == 'packed' && $order_data['order_status'] == 'complete') {
+            self::maybe_mark_order_as_completed($order->get_id(), $order_data);
         }
-        foreach ($data['packages'] as $package) {
-            foreach ($package['tracking_numbers'] as $trackingNumber) {
-                $tracks[] = [
-                    'tracking_number' => $trackingNumber,
-                    'carrier_code' => $carrier,
-                    'title' => $title,
-                ];
-                $order->add_order_note(sprintf(
-                    __('Tracking number %s for carrier %s added.', 'woocommerce'),
-                    $trackingNumber,
-                    $carrier
-                ));
-                update_post_meta($order->get_id(), '_tracking_number', $trackingNumber);
-                update_post_meta($order->get_id(), '_tracking_provider', $carrier);
-                update_post_meta($order->get_id(), '_tracking_provider_title', $title);
-            }
-        }
-
-        $shipment = new WC_Order_Shipment($orderIncrementId);
-        $shipment->set_items_qty($itemsQty);
-        $shipment->set_tracking($tracks);
-        $shipment->set_comments($comments);
-        $shipment->save();
-
-        foreach ($data['items'] as $dataItem) {
-            $orderItem = $order->get_item($dataItem['order_item_id']);
-            if ($orderItem) {
-                $orderItem->update_meta_data('order_item_id', $dataItem['order_item_id']);
-                $orderItem->update_meta_data('sku', $dataItem['sku']);
-                $orderItem->update_meta_data('quantity', $dataItem['quantity']);
-                $orderItem->update_meta_data('package_data', $dataItem['package_data']);
-                $orderItem->update_meta_data('lot_data', $dataItem['lot_data']);
-                $orderItem->save();
-            }
-        }
-
-        if ($data['order_status'] === "wc-complete") {
-            $order->update_status('wc-completed', __('All items are shipped.', 'woocommerce'));
-        }
-
-        $mailer = WC()->mailer();
-        $email = $mailer->emails['WC_Email_Customer_Shipment'];
-        $email->trigger($orderIncrementId, $shipment, $order);
-
-        return $shipment->get_id();
     }
 
-    /**
-     * Retrieve shipped order item quantities from Shipstream shipment packages
-     * @param $order
-     * @param $data
-     * @return array
-     */
-    protected function _getShippedItemsQty($order, $data)
-    {
-        $itemShippedQty = [];
-
-        // Get order item reference IDs from shipment data
-        foreach ($data['items'] as $dataItem) {
-            $orderItem = $order->get_item($dataItem['order_item_id']);
-            if ($orderItem) {
-                $orderItemId = $orderItem->get_id();
-                $orderItemRef = $dataItem['order_item_ref'];
-                $itemShippedQty[$orderItemId] = $orderItemRef;
-            }
+    public static function add_tracking_number_to_order($order_id, $tracking_number, $carrier) {
+        if (!class_exists('WC_Shipment_Tracking')) {
+            return;
         }
 
-        // Accumulate shipment quantities from Shipstream packages
-        foreach ($data['packages'] as $package) {
-            foreach ($package['items'] as $item) {
-                $orderItemId = $item['order_item_id'];
-                if (isset($itemShippedQty[$orderItemId])) {
-                    $itemShippedQty[$orderItemId] += floatval($item['order_item_qty']);
-                } else {
-                    $itemShippedQty[$orderItemId] = floatval($item['order_item_qty']);
+        $tracking_provider = WC_Shipment_Tracking::get_providers()[$carrier] ?? $carrier;
+
+        $tracking_data = array(
+            'tracking_provider' => $tracking_provider,
+            'tracking_number'   => $tracking_number,
+            'date_shipped'      => current_time('timestamp'),
+        );
+
+        $wc_shipment_tracking = new WC_Shipment_Tracking();
+        $wc_shipment_tracking->add_tracking_number($order_id, $tracking_data);
+    }
+
+    public static function update_order_line_items_with_shipment_info($order_id, $order_data) {
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
+
+        foreach ($order->get_items() as $item_id => $item) {
+            $item_sku = $item->get_product()->get_sku();
+
+            foreach ($order_data['items'] as $shipment_item) {
+                if ($shipment_item['sku'] === $item_sku) {
+                    wc_update_order_item_meta($item_id, 'order_item_id', $shipment_item['order_item_id']);
+                    wc_update_order_item_meta($item_id, 'sku', $shipment_item['sku']);
+                    wc_update_order_item_meta($item_id, 'quantity', $shipment_item['quantity']);
+                    wc_update_order_item_meta($item_id, 'package_data', json_encode($shipment_item['package_data']));
+                    wc_update_order_item_meta($item_id, 'lot_data', json_encode($shipment_item['lot_data']));
+                }
+            }
+        }
+    }
+
+    public static function maybe_mark_order_as_completed($order_id, $order_data) {
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
+
+        $all_items_shipped = true;
+
+        foreach ($order->get_items() as $item) {
+            $item_sku = $item->get_product()->get_sku();
+            $order_quantity = $item->get_quantity();
+
+            foreach ($order_data['items'] as $shipment_item) {
+                if ($shipment_item['sku'] === $item_sku) {
+                    if ((float)$shipment_item['quantity'] < (float)$order_quantity) {
+                        $all_items_shipped = false;
+                        break 2;
+                    }
                 }
             }
         }
 
-        // Adjust quantities for partially shipped items
-        foreach ($itemShippedQty as $item_id => $ordered_qty) {
-            $fraction = fmod($ordered_qty, 1);
-            $wholeNumber = intval($ordered_qty);
-            if ($fraction >= 0.9999) {
-                $ordered_qty = $wholeNumber + round($fraction);
-            } else {
-                $ordered_qty = $wholeNumber;
-            }
-            $itemShippedQty[$item_id] = $ordered_qty;
-            if ($itemShippedQty[$item_id] == 0) {
-                unset($itemShippedQty[$item_id]);
-            }
+        if ($all_items_shipped) {
+            $order->update_status('completed');
         }
-
-        return $itemShippedQty;
-    }
-
-    /**
-     * Prepare shipment comment data from Shipstream shipment packages
-     * @param $order
-     * @param $data
-     * @return string
-     */
-    protected function _getCommentsData($order, $data)
-    {
-        $orderComments = [];
-
-        // Get item names & SKUs from WooCommerce order items
-        foreach ($order->get_items() as $orderItem) {
-            $orderComments[$orderItem->get_sku()] = [
-                'sku' => $orderItem->get_sku(),
-                'name' => $orderItem->get_name(),
-            ];
-        }
-
-        // Add lot data of order items
-        foreach ($data['items'] as $item) {
-            if (isset($orderComments[$item['sku']])) {
-                foreach ($item['lot_data'] as $lot_data) {
-                    $orderComments[$item['sku']]['lotdata'][] = $lot_data;
-                }
-            }
-        }
-
-        // Add collected data of packages from shipment packages
-        foreach ($data['packages'] as $package) {
-            $orderItems = [];
-            foreach ($package['items'] as $item) {
-                $orderItems[$item['order_item_id']] = $item['sku'];
-            }
-
-            foreach ($package['package_data'] as $packageData) {
-                if (isset($orderItems[$packageData['order_item_id']])) {
-                    $sku = $orderItems[$packageData['order_item_id']];
-                    $orderComments[$sku]['collected_data'] = [
-                        'label' => $packageData['label'],
-                        'value' => $packageData['value'],
-                    ];
-                }
-            }
-        }
-
-        $comments = array_values($orderComments);
-        if (function_exists('yaml_emit')) {
-            return yaml_emit($comments);
-        } else {
-            return json_encode($comments, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        }
-    }
-
-    /**
-     * Retrieve available carriers for the order
-     * @param $order
-     * @return array
-     */
-    protected function _getCarriers($order)
-    {
-        // Placeholder for retrieving carriers for WooCommerce
-        return [
-            'dhl' => 'DHL',
-            'ups' => 'UPS',
-            'fedex' => 'FedEx',
-            'custom' => 'Custom Carrier',
-        ];
     }
 
     /**
@@ -466,18 +366,24 @@ class ShipStream_API {
      * @param $request
      * @return WP_REST_Response
      */
-    public static function order_list($request)
+    public static function order_list(WP_REST_Request $request)
     {
         global $wpdb;
 
-        $cols_select = ['id', 'date_updated_gmt'];
-        $cols = ['id', 'date_modified'];
-        $orders = [];
+        $cols_select        = ['id', 'date_updated_gmt'];
+        $cols               = ['id', 'date_modified'];
+        $orders             = [];
+        $date_updated_gmt   = [];
+        $status             = [];
 
-        $filters = $request->get_param('filters') ? $request->get_param('filters') : [];
-        $date_updated_gmt = isset($filters['date_updated_gmt']) ? $filters['date_updated_gmt'] : [];
-        $status = isset($filters['status']) ? $filters['status'] : [];
-
+        if($request->get_param('date_updated_gmt'))
+        {
+            $date_updated_gmt = $request->get_param('date_updated_gmt');
+        }
+        if($request->get_param('status'))
+        {
+            $status = $request->get_param('status');
+        }
         // Build the base query
         $query = $wpdb->prepare(
             "SELECT " . implode(", ", $cols_select) . " FROM {$wpdb->prefix}wc_orders WHERE type = %s",
@@ -498,11 +404,6 @@ class ShipStream_API {
             $status_in = implode(", ", array_map(function($item) use ($wpdb) { return $wpdb->prepare('%s', $item); }, $status['in']));
             $query .= " AND status IN ($status_in)";
         }
-        if (isset($status['not in']) && !empty($status['not in'])) {
-            $status_not_in = implode(", ", array_map(function($item) use ($wpdb) { return $wpdb->prepare('%s', $item); }, $status['not in']));
-            $query .= " AND status NOT IN ($status_not_in)";
-        }
-
         // Execute the query
         $results = $wpdb->get_results($query, ARRAY_A);
 
@@ -530,7 +431,7 @@ class ShipStream_API {
      * @param WP_REST_Request $request The REST request object.
      * @return WP_REST_Response The response object.
      */
-    public static function add_order_comment($request)
+    public static function add_order_comment(WP_REST_Request $request)
     {
         $order_id = $request->get_param('order_id');
         $status = $request->get_param('status');
@@ -576,6 +477,46 @@ class ShipStream_API {
 
         return new WP_REST_Response(['success' => 'Comment added to order.', 'comment_id' => $comment_id], 200);
     }
+
+    /**
+     * Update the status of an order and add a comment.
+     * 
+     * @param WP_REST_Request $request The REST request object.
+     * @return WP_REST_Response The response object.
+     */
+    public static function updateOrderStatus(WP_REST_Request $request)
+    {
+        // Get parameters from the request
+        $shipstream_id = $request->get_param('shipstreamId');
+        $order_id = $request->get_param('orderId');
+        $status = $request->get_param('status');
+
+        // Check for missing required parameters
+        if (empty($shipstream_id) || empty($order_id) || empty($status)) {
+            return new WP_REST_Response(['error' => 'Order ID, Status, and Shipment ID are required.'], 400);
+        }
+
+        // Get the order by ID
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return new WP_REST_Response(['error' => 'Invalid order ID.'], 404);
+        }
+
+        // Validate and update the order status
+        $sanitized_status = sanitize_text_field($status);
+        if (empty($sanitized_status)) {
+            return new WP_REST_Response(['error' => 'Invalid status.'], 400);
+        }
+
+        // Update order status and add a comment
+        $order->update_status($sanitized_status, 'Order status updated by ShipStream');
+        $order->delete_meta_data('_shipstream_order_ids');
+        $order->save();
+
+        // Return a success response
+        return new WP_REST_Response(['success' => 'Status updated successfully for order #' . $order_id], 200);
+    }
+
 
 }
 
