@@ -18,6 +18,9 @@
                     <shipment>
                         <packed>1</packed>
                     </shipment>
+                    <order>
+                        <status_changed>1</status_changed>
+                    </order>
                 </events>
             </ShipStream_WooCommerce>
         </plugin>
