@@ -28,6 +28,8 @@
  * @link      http://opensource.org/licenses/osl-3.0.php
  */
 
+use GuzzleHttp\Exception\GuzzleException;
+
 /**
  * HTTP CURL Adapter
  *
@@ -94,26 +96,41 @@ class ShipStream_WooCommerce_Client
      * Make a request to the WooCommerce API
      *
      * @param string $endpoint Endpoint
-     * @param string $method   Method
-     * @param array  $params   Array
+     * @param string $method Method
+     * @param array $params Array
      *
-     * @return mixed
      * @throws Exception
+     * @throws GuzzleException
      */
     public function request(
         string $endpoint,
         string $method = 'POST',
         array $params = array()
     ) {
-        $url = $this->config['base_url'] . $endpoint;
-        $ch = curl_init();
+
+        $response = '';
+        //$url = $this->config['base_url'] . $endpoint;
 
         $headers = array(
             'Authorization: Basic ' . $this->token,
-            'Content-Type: application/json'
+            'Content-Type: application/json',
+            'base_uri' => $this->config['base_url']
         );
 
+        $client = new GuzzleHttp\Client($headers);
+
         switch ($method) {
+            case 'POST':
+                $response = $client->request($method, $endpoint, $params);
+                break;
+
+            default:
+                if (!empty($params)) {
+                    $response = $client->request('GET', '', $params);
+                }
+        }
+
+        /*switch ($method) {
         case 'POST':
             curl_setopt($ch, CURLOPT_POST, true);
             curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($params));
@@ -145,8 +162,8 @@ class ShipStream_WooCommerce_Client
             throw new Exception('Request Error: ' . curl_error($ch));
         }
 
-        curl_close($ch);
+        curl_close($ch); */
 
-        return json_decode($response, true);
+       return $response;
     }
 }

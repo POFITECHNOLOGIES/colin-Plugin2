@@ -1,7 +1,9 @@
 <?php
 
+use GuzzleHttp\Exception\GuzzleException;
+
 /**
- * The ShipStream order.increment_id is the WooCommerce shipment.increment_id.
+ * The ShipStream order.increment_id is the WooCommerce order_increment_id.
  * The ShipStream order ref (order.ext_order_id) is the WooCommerce order.increment_id.
  */
 class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
@@ -18,15 +20,18 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
 
     /**
      * @return bool
+     * @throws Exception
      */
-    public function hasConnectionConfig()
+    public function hasConnectionConfig(): bool
     {
-        return $this->getConfig('api_url') && $this->getConfig('api_login') && $this->getConfig('api_password');
+        return $this->getConfig('api_url') && $this->getConfig('consumer_key') && $this->getConfig('consumer_secret');
     }
 
     /**
+     * @param bool $super
      * @return array
      * @throws Plugin_Exception
+     * @throws Exception
      */
     public function connectionDiagnostics(bool $super = false): array
     {
@@ -52,6 +57,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             $this->registerFulfillmentService();
         } catch (Plugin_Exception $e) {
             $warnings[] = $e->getMessage();
+        } catch (Exception $e) {
         }
 
         return $warnings;
@@ -74,9 +80,9 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
         try {
             $this->setState(
                 array(
-                    self::STATE_LOCK_ORDER_PULL => NULL,
-                    self::STATE_ORDER_LAST_SYNC_AT => NULL,
-                    self::STATE_FULFILLMENT_SERVICE_REGISTERED => NULL,
+                self::STATE_LOCK_ORDER_PULL => NULL,
+                self::STATE_ORDER_LAST_SYNC_AT => NULL,
+                self::STATE_FULFILLMENT_SERVICE_REGISTERED => NULL,
                 )
             );
         } catch (Plugin_Exception $e) {
@@ -101,13 +107,12 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      */
     public function syncInventory()
     {
-        $result = $this->_wooCommerceApi('shipstream/v1/sync_inventory', 'POST');
-        if (isset($result['success'])) {
-            if (!$result['success']) {
-                throw new Plugin_Exception($result['message']);
-            }
-        } else {
-            throw new Plugin_Exception($result['message']);
+
+        try {
+            $this->_wooCommerceApi('shipstream/v1/sync_inventory');
+        } catch (Exception $e) {
+            $this->log(sprintf('Cannot Sync Inventory. Error: %s', $e->getMessage()));
+            throw new Plugin_Exception($e->getMessage());
         }
     }
 
@@ -116,6 +121,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * Synchronize orders since the configured date
      *
      * @throws Plugin_Exception
+     * @throws Exception
      */
     public function syncOrders()
     {
@@ -129,6 +135,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
 
     /**
      * Synchronize orders since the last sync
+     * @throws Plugin_Exception
      */
     public function cronSyncOrders()
     {
@@ -137,6 +144,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
 
     /**
      * @return array|string|null
+     * @throws Exception
      */
     public function isFulfillmentServiceRegistered()
     {
@@ -146,6 +154,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     /**
      * Register fulfillment service
      * @throws Plugin_Exception
+     * @throws Exception
      */
     public function registerFulfillmentService()
     {
@@ -161,7 +170,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     public function unregisterFulfillmentService()
     {
         $this->_wooCommerceApi('shipstream/v1/set_config', 'POST', array('path' => 'warehouse_api_url','value' => NULL));
-        $this->setState(self::STATE_FULFILLMENT_SERVICE_REGISTERED, NULL);
+        $this->setState(self::STATE_FULFILLMENT_SERVICE_REGISTERED);
     }
 
     /*****************
@@ -216,10 +225,10 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             'items' => $orderItems,
             'address' => $shippingAddress,
             'options' => $additionalData,
-            'timestamp' => new \DateTime('now', $this->getTimeZone()),
+            'timestamp' => new DateTime('now', $this->getTimeZone()),
         );
         $output = NULL;
-
+       
         // Apply user scripts
         try {
             if ($script = $this->getConfig('filter_script')) {
@@ -347,25 +356,23 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @param Varien_Object $data
      * @throws Plugin_Exception
      */
-
+   
     public function shipmentPackedEvent(Varien_Object $data)
     {
-        // $clientOrderId  = $this->_getWooCommerceShipmentId($data->getSource());
-        $clientOrderId  = 161;
-        $clientOrder    = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'POST', array('shipment_id' => $clientOrderId));
-        
-        if (!in_array($clientOrder['status'], array('submitted', 'failed-to-submit'))) {
-            throw new Plugin_Exception("Order $clientOrderId status is '{$clientOrder['status']}', expected 'submitted'.");
+        $clientOrderId = $this->_getWooCommerceShipmentId($data->getSource());
+        $clientOrder = $this->_wooCommerceApi('shipstream/v1/order_shipment/info', 'POST', $clientOrderId);
+
+        if (!in_array($clientOrder['status'], array('wc-submitted', 'wc-failed-to-submit'))) {
+            throw new Plugin_Exception("Order $clientOrderId status is '{$clientOrder['status']}', expected 'wc-submitted'.");
         }
 
-        if ($clientOrder['status'] == 'failed-to-submit') {
+        if ($clientOrder['status'] == 'wc-failed-to-submit') {
             $this->log(sprintf('Order # %s was Failed to Submit, but we assume it is ok to complete it anyway.', $clientOrderId));
         }
 
         $payload = $data->getData();
-        $payload['warehouse_name'] = $this->getWarehouseName($data->getWarehouseId());
-        $wooCommerceShipmentId = $this->_wooCommerceApi('shipstream/v1/order_shipment/create_with_tracking', 'POST', array('orderIncrementId' => $clientOrderId,'data' => $payload));
-
+        $payload['warehouse_name'] = $this->_getWarehouseName($data->getWarehouseId());
+        $wooCommerceShipmentId = $this->_wooCommerceApi('shipstream/v1/order_shipment/create_with_tracking', 'POST', array($clientOrderId, $payload));
 
         $this->log(sprintf('Created WooCommerce shipment # %s for order # %s', $wooCommerceShipmentId, $clientOrderId));
     }
@@ -379,6 +386,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * Respond to the delivery committed webhook
      *
      * @param Varien_Object $data
+     * @throws Plugin_Exception
      */
     public function respondDeliveryCommitted(Varien_Object $data)
     {
@@ -389,6 +397,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * Respond to the inventory adjustment webhook
      *
      * @param Varien_Object $data
+     * @throws Plugin_Exception
      */
     public function respondInventoryAdjusted(Varien_Object $data)
     {
@@ -399,6 +408,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * Respond to shipment:packed event, completes the fulfillment
      *
      * @param Varien_Object $data
+     * @throws Plugin_Exception
      */
     public function respondShipmentPacked(Varien_Object $data)
     {
@@ -407,34 +417,8 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
         }
     }
 
-     /**
-     * Respond to order:status_changed event, completes the fulfillment
-     *
-     * @param Varien_Object $data
-     */
-    public function respondOrderStatus_changed(Varien_Object $data)
-    {
-        $shipstreamId       = $data->getUniqueId();
-        $orderId            = $data->getOrderRef();
-        $status             = $data->getStatus();
-        $autoFulfillStatus  = $this->getConfig('auto_fulfill_status');
-        if(!empty($status) && $status=="canceled")
-        {
-            $request = array("shipstreamId" => $shipstreamId,"orderId" => $orderId,"status" => $autoFulfillStatus);
-            $response = $this->_wooCommerceApi('shipstream/v1/order/status_update', 'POST', $request);
-            if (isset($response['success'])) 
-            {
-                $this->log($response['success']);
-            } 
-            else 
-            {
-                $this->log(json_encode($response));
-            }
-        }
-    }
-
-
-    /************************
+   
+/************************
      * Callbacks (<routes>) *
      ************************/
 
@@ -443,9 +427,8 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      *
      * @param array $query
      * @return string
-     * @throws Plugin_Exception
      */
-    public function inventoryWithLock($query)
+    public function inventoryWithLock(array $query): string
     {
         $result = $skus = array();
         try {
@@ -468,18 +451,18 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     }
 
     /**
-     * @throws Plugin_Exception
+     * @throws Exception
      */
-    public function unlockOrderImport()
+    public function unlockOrderImport(): bool
     {
         $this->_unlockOrderImport();
         return TRUE;
     }
 
     /**
-     * @throws Plugin_Exception
+     * @throws Plugin_Exception|Exception
      */
-    public function lockOrderImport()
+    public function lockOrderImport(): bool
     {
         $this->_lockOrderImport();
         return TRUE;
@@ -491,7 +474,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @param array $query
      * @return string|true
      */
-    public function syncOrder($query)
+    public function syncOrder(array $query)
     {
         if (isset($query['increment_id'])) {
             try {
@@ -514,15 +497,17 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     /**
      * Import orders
      *
-     * @param null|string $from
-     * @return void
+     * @param string|null $from
+     *
+     * @throws Plugin_Exception
+     * @throws Exception
      */
-    protected function _importOrders($from = NULL)
+    protected function _importOrders(string $from = NULL)
     {
         // Do not import orders while inventory is being synced
         $state = $this->getState(self::STATE_LOCK_ORDER_PULL, TRUE);
         if (! empty($state['value']) && $state['value'] == 'locked') {
-            return $this->log(sprintf('Order import is currently locked. Please unlock it to proceed with importing orders.'));
+            $this->log(sprintf('%s','Order import is currently locked. Please unlock it to proceed with importing orders.'));
         }
 
         $now = time();
@@ -550,7 +535,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             // Sanitize - map "Ready To Ship" to "ready_to_ship"
             $statuses = array_map(
                 function($status) {
-                    return strtolower(str_replace(' ', '_', $status));
+                return strtolower(str_replace(' ', '_', $status));
                 }, $statuses
             );
         } else if ($status && $status !== '-') {
@@ -589,7 +574,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @return bool
      * @throws Exception
      */
-    protected function _lockOrderImport()
+    protected function _lockOrderImport(): bool
     {
         $seconds = 0;
         do {
@@ -641,8 +626,9 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @param array $data
      * @return string
      * @throws Plugin_Exception
+     * @throws Exception
      */
-    protected function _getShippingMethod($data)
+    protected function _getShippingMethod(array $data): string
     {
         $shippingLines = $data['shipping_lines'];
         if (empty($shippingLines)) {
@@ -709,9 +695,9 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
     }
 
 
-    protected function _checkItem(array $item)
+    protected function _checkItem($productType): bool
     {
-        return (isset($item['product_type']) && $item['product_type'] == 'simple');
+        return ($productType && $productType == 'simple');
     }
 
     /**
@@ -720,6 +706,8 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @param string $orderIncrementId
      * @param string $orderStatus
      * @param string $comment
+     * @param string $appTitle
+     * @param string $shipstreamId
      * @return void
      */
     protected function _addComment(string $orderIncrementId, string $orderStatus, string $comment = '', string $appTitle = '', string $shipstreamId = '')
@@ -732,7 +720,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
                 'apptitle'      => $appTitle,
                 'shipstreamid'  => $shipstreamId,
             );
-            $data = $this->_wooCommerceApi('shipstream/v1/order/addComment', 'POST', $comment_data);
+            $this->_wooCommerceApi('shipstream/v1/order/addComment', 'POST', $comment_data);
             $message = sprintf('Status of order # %s was changed to %s in merchant site, comment: %s', $orderIncrementId, $orderStatus, $comment);
             $this->log($message);
         } catch (Throwable $e) {
@@ -745,29 +733,33 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      * @param string $endpoint
      * @param string $method
      * @param array $params
-     * @return array
+     *
+     * @return mixed|void
      * @throws Plugin_Exception
      */
-    protected function _wooCommerceApi($endpoint, $method = 'POST', $params = array())
+    protected function _wooCommerceApi(string $endpoint, string $method = 'POST', array $params = array())
     {
         try {
             return $this->getClient()->request($endpoint, $method, $params);
         } catch (Exception $e) {
             throw new Plugin_Exception($e->getMessage());
+        } catch (GuzzleException $e) {
         }
+
     }
 
     /**
      * @return ShipStream_WooCommerce_Client
+     * @throws Exception
      */
-    protected function getClient()
+    protected function getClient(): ShipStream_WooCommerce_Client
     {
         if (!$this->_client) {
             $this->_client = new ShipStream_WooCommerce_Client(
                 array(
-                    'base_url' => $this->getConfig('api_url'),
-                    'consumer_key' => $this->getConfig('api_login'),
-                    'consumer_secret' => $this->getConfig('api_password'),
+                'base_url' => $this->getConfig('api_url'),
+                'consumer_key' => $this->getConfig('consumer_key'),
+                'consumer_secret' => $this->getConfig('consumer_secret'),
                 )
             );
         }
@@ -809,8 +801,8 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
         $orderItems = array();
         $skus       = array();
         foreach ($wooCommerceItems as $item) {
-            if (isset($item['product_type']) && $item['product_type'] == 'simple') {
-                // continue;
+            if ($this->_checkItem($item['product_type'])) {
+                continue;
             }
             $orderItems[] = array(
                 'sku' => $item['sku'],
@@ -821,19 +813,6 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
         }
 
         return array($orderItems,$skus);
-    }
-
-    /**
-     * @param array $orderData
-     * @param array $wooCommerceOrder
-     * @param string $logPrefix
-     */
-    protected function processOrderTransformScript(array &$orderData, array $wooCommerceOrder, string $logPrefix)
-    {
-        if ($script = $this->getConfig('order_transform_script')) {
-            eval($script);
-            $this->log($logPrefix . 'Transform Script: Applied.');
-        }
     }
 
     /**
@@ -852,7 +831,7 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
             }
 
             $this->log($logPrefix . sprintf('Order Submitted to ShipStream: Order # %s', $result['unique_id']));
-            $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-submitted', sprintf('Submitted to ShipStream: Order # %s', $this->getAppTitle(), $result['unique_id']));
+            $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-submitted', sprintf('Submitted to ShipStream: Order # %s - %s', $this->getAppTitle(), $result['unique_id']));
         } catch (Exception $e) {
             $this->_addComment($wooCommerceOrder['order_increment_id'], 'wc-failed-to-submit', sprintf('Failed to Submit to ShipStream: %s', $this->getAppTitle()));
             throw new Plugin_Exception($e->getMessage());
@@ -865,10 +844,22 @@ class ShipStream_WooCommerce_Plugin extends Plugin_Abstract
      */
     protected function _getWooCommerceShipmentId(string $source): ?string
     {
-        if (strpos($source, 'woocommerce:') === 0) {
-            return substr($source, strlen('woocommerce:'));
+        if (strpos($source, 'woocommerce_shipment:') === 0) {
+            return substr($source, strlen('woocommerce_shipment:'));
         }
 
         return NULL;
+    }
+
+    /**
+     * @param int $warehouseId
+     * @return string|null
+     * @throws Plugin_Exception
+     */
+
+    protected function _getWarehouseName(int $warehouseId): ?string
+    {
+        $warehouse = $this->call('warehouse.get', array($warehouseId));
+        return $warehouse['name'] ?? NULL;
     }
 }
